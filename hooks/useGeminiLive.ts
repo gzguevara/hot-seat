@@ -1,31 +1,33 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from '@google/genai';
 import { Character, SessionStatus, AudioVolumeState } from '../types';
-import { MODEL_NAME, CHARACTERS } from '../constants';
-import { pcmToGeminiBlob, base64ToUint8Array, decodeAudioData } from '../utils/audioUtils';
+import { MODEL_NAME } from '../constants';
+import { pcmToGeminiBlob, base64ToUint8Array } from '../utils/audioUtils';
 import { CustomMediaRecorder } from '../utils/CustomMediaRecorder';
 import { saveTranscript } from '../utils/transcriptStorage';
+import { brain } from '../services/Brain';
+import { AudioStreamPlayer } from '../utils/AudioStreamPlayer';
 
 interface UseGeminiLiveProps {
   onTransfer: (character: Character, summary?: string) => void;
   userBio: string;
+  characters: Character[];
 }
 
-export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
+export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLiveProps) => {
   const [status, setStatus] = useState<SessionStatus>(SessionStatus.DISCONNECTED);
   const [volume, setVolume] = useState<AudioVolumeState>({ inputVolume: 0, outputVolume: 0 });
   const [error, setError] = useState<string | null>(null);
 
-  // References for audio handling
+  // Audio Contexts
   const inputContextRef = useRef<AudioContext | null>(null);
-  const outputContextRef = useRef<AudioContext | null>(null);
   const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const nextStartTimeRef = useRef<number>(0);
-  const scheduledSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   
-  // Custom Recorder
+  // Players & Recorders
+  const audioPlayerRef = useRef<AudioStreamPlayer | null>(null);
   const recorderRef = useRef<CustomMediaRecorder | null>(null);
 
   // Cache for the hello.wav buffer
@@ -34,6 +36,21 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
   // API Reference
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
   const currentSessionRef = useRef<any>(null);
+
+  // Data Ref to prevent stale closures
+  const charactersRef = useRef(characters);
+
+  // Transcript Buffer for Brain Context
+  const transcriptBufferRef = useRef<string[]>([]);
+  const currentCharacterRef = useRef<Character | null>(null);
+  
+  // Real-time transcript accumulation
+  const currentInputRef = useRef<string>("");
+  const currentOutputRef = useRef<string>("");
+
+  useEffect(() => {
+    charactersRef.current = characters;
+  }, [characters]);
 
   // Pre-load hello.wav on mount
   useEffect(() => {
@@ -82,11 +99,7 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
     // 1. Export Recording before destroying context
     if (recorderRef.current && recorderRef.current.hasRecordedData()) {
         const blob = recorderRef.current.getCombinedAudioBlob();
-        
-        // Fix for empty log: Explicitly log size to prove data existence
         console.log(`[System] Session ended. Recording ready. Size: ${blob.size} bytes`);
-        
-        // Store in the simulated app folder instead of downloading
         await saveTranscript(blob);
     }
     // Reset recorder
@@ -96,18 +109,17 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
       await inputContextRef.current.close();
       inputContextRef.current = null;
     }
-    if (outputContextRef.current) {
-      await outputContextRef.current.close();
-      outputContextRef.current = null;
+    
+    // Stop Player
+    if (audioPlayerRef.current) {
+        audioPlayerRef.current.close();
+        audioPlayerRef.current = null;
     }
+
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
-    scheduledSourcesRef.current.forEach(source => {
-      try { source.stop(); } catch (e) { /* ignore */ }
-    });
-    scheduledSourcesRef.current.clear();
 
     if (currentSessionRef.current) {
         try { currentSessionRef.current.close(); } catch(e) { console.warn(e); }
@@ -117,16 +129,22 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
     sessionPromiseRef.current = null;
     setStatus(SessionStatus.DISCONNECTED);
     setVolume({ inputVolume: 0, outputVolume: 0 });
-    nextStartTimeRef.current = 0;
+    
+    // Reset transcript accumulation
+    currentInputRef.current = "";
+    currentOutputRef.current = "";
   }, []);
 
   const connect = useCallback(async (character: Character, initialContext?: string) => {
     try {
       setStatus(SessionStatus.CONNECTING);
       setError(null);
+      currentCharacterRef.current = character;
       
       // Initialize Recorder
       recorderRef.current = new CustomMediaRecorder();
+      // Initialize Player
+      audioPlayerRef.current = new AudioStreamPlayer(24000);
 
       // --- 1. Audio Setup ---
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -134,9 +152,6 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
 
       const inputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       inputContextRef.current = inputContext;
-      
-      const outputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      outputContextRef.current = outputContext;
 
       const source = inputContext.createMediaStreamSource(stream);
       inputSourceRef.current = source;
@@ -172,7 +187,8 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
       scriptProcessor.connect(inputContext.destination);
 
       // --- 2. Tool Setup ---
-      const colleagues = CHARACTERS.filter(c => c.id !== character.id);
+      const currentCharacters = charactersRef.current;
+      const colleagues = currentCharacters.filter(c => c.id !== character.id);
       
       const transferTool: FunctionDeclaration = {
         name: 'transferToColleague',
@@ -199,20 +215,23 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
       
       let systemInstruction = character.systemInstruction;
       
+      // Inject Initial Context if provided (from previous handoff or start)
       if (userBio && userBio.trim()) {
-        systemInstruction += `\n\n[CANDIDATE INFO]: The candidate has provided the following bio: "${userBio}". Use this to tailor your questions and assess their specific background level.`;
+        systemInstruction += `\n\n[CANDIDATE INFO]: "${userBio}".`;
       }
 
       if (initialContext) {
-        systemInstruction += `\n\n[SYSTEM NOTICE]: You are in a panel interview. Your colleague just turned to you to continue the line of questioning. \nContext from previous expert: "${initialContext}". \n[IMPORTANT]: You have now taken the floor. Respond directly to the context provided by your colleague. Do not re-introduce yourself. Jump right in.`;
+        // Brain logic already updated instruction
       } else {
-        systemInstruction += `\n\n[SYSTEM NOTICE]: The user has entered the interview room. \n[IMPORTANT]: Welcome the candidate and start the interview when you hear the "Hello" trigger.`;
+        systemInstruction += `\n\n[SYSTEM NOTICE]: Welcome the candidate and start the interview when you hear the "Hello" trigger.`;
       }
 
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME,
         config: {
           responseModalities: [Modality.AUDIO],
+          inputAudioTranscription: {}, 
+          outputAudioTranscription: {}, 
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: character.voiceName } }
           },
@@ -227,54 +246,94 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
           onmessage: async (message: LiveServerMessage) => {
             const serverContent = message.serverContent;
             
+            // --- Transcript Tracking ---
+            if (serverContent?.outputTranscription?.text) {
+                currentOutputRef.current += serverContent.outputTranscription.text;
+            }
+            if (serverContent?.inputTranscription?.text) {
+                currentInputRef.current += serverContent.inputTranscription.text;
+            }
+
+            if (serverContent?.turnComplete) {
+                if (currentInputRef.current.trim()) {
+                    transcriptBufferRef.current.push(`Candidate: ${currentInputRef.current.trim()}`);
+                    currentInputRef.current = "";
+                }
+                if (currentOutputRef.current.trim()) {
+                    transcriptBufferRef.current.push(`${character.name}: ${currentOutputRef.current.trim()}`);
+                    currentOutputRef.current = "";
+                }
+            }
+
+            // --- Tool Calling (Handoff) ---
             if (message.toolCall) {
               const call = message.toolCall.functionCalls.find(fc => fc.name === 'transferToColleague');
               if (call) {
                 const args = call.args as any;
-                const targetChar = CHARACTERS.find(c => c.name === args.targetName);
+                const targetChar = charactersRef.current.find(c => c.name === args.targetName);
+                
                 if (targetChar) {
+                   console.log("[Transfer] Initiating Brain Phase 3 Analysis...");
+                   
+                   if (currentInputRef.current.trim()) {
+                        transcriptBufferRef.current.push(`Candidate: ${currentInputRef.current.trim()}`);
+                        currentInputRef.current = "";
+                   }
+                   if (currentOutputRef.current.trim()) {
+                        transcriptBufferRef.current.push(`${character.name}: ${currentOutputRef.current.trim()}`);
+                        currentOutputRef.current = "";
+                   }
+
+                   const transcriptHistory = transcriptBufferRef.current.join('\n');
+                   const currentName = currentCharacterRef.current?.name || "Interviewer";
+
                    await disconnect();
-                   onTransfer(targetChar, args.summary);
+                   
+                   const newHistorySection = await brain.initializePhase3(
+                       currentName, 
+                       targetChar.name, 
+                       transcriptHistory, 
+                       args.summary
+                   );
+
+                   const updatedInstruction = targetChar.systemInstruction.replace(
+                       /<HISTORY>[\s\S]*?<\/HISTORY>/, 
+                       newHistorySection
+                   );
+                   
+                   const updatedTargetChar = {
+                       ...targetChar,
+                       systemInstruction: updatedInstruction
+                   };
+
+                   onTransfer(updatedTargetChar, args.summary);
                    return;
                 }
               }
             }
 
+            // --- Audio Playback & Recording ---
             const base64Audio = serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
-            if (base64Audio && outputContextRef.current) {
-               const ctx = outputContextRef.current;
-               const audioData = base64ToUint8Array(base64Audio);
-
-               // Feed AI Audio to Recorder
-               if (recorderRef.current) {
-                   recorderRef.current.addAiAudio(audioData);
-               }
-               
-               let sum = 0;
-               const sampleCheckLen = Math.min(audioData.length, 100);
-               for(let i=0; i<sampleCheckLen; i++) sum += (audioData[i]/255) * (audioData[i]/255);
-               setVolume(prev => ({ ...prev, outputVolume: Math.min(1, Math.sqrt(sum/sampleCheckLen) * 2) }));
-
-               const audioBuffer = await decodeAudioData(audioData, ctx, 24000, 1);
-               const source = ctx.createBufferSource();
-               source.buffer = audioBuffer;
-               source.connect(ctx.destination);
-               
-               nextStartTimeRef.current = Math.max(nextStartTimeRef.current, ctx.currentTime);
-               source.start(nextStartTimeRef.current);
-               nextStartTimeRef.current += audioBuffer.duration;
-               
-               scheduledSourcesRef.current.add(source);
-               source.onended = () => {
-                   scheduledSourcesRef.current.delete(source);
-                   setVolume(prev => ({ ...prev, outputVolume: prev.outputVolume * 0.8 })); 
-               };
+            if (base64Audio) {
+                // 1. Record (Add to global mix)
+                if (recorderRef.current) {
+                    const audioData = base64ToUint8Array(base64Audio);
+                    recorderRef.current.addAiAudio(audioData);
+                }
+                
+                // 2. Play (Stream)
+                if (audioPlayerRef.current) {
+                    audioPlayerRef.current.play(base64Audio, (vol) => {
+                        setVolume(prev => ({ ...prev, outputVolume: vol }));
+                    });
+                }
             }
 
             if (serverContent?.interrupted) {
-                scheduledSourcesRef.current.forEach(s => s.stop());
-                scheduledSourcesRef.current.clear();
-                nextStartTimeRef.current = 0;
+                if (audioPlayerRef.current) {
+                    audioPlayerRef.current.stop();
+                }
+                // No need to reset nextStartTimeRef manually here as player handles it
             }
           },
           onclose: () => {
@@ -307,7 +366,7 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
       setStatus(SessionStatus.ERROR);
       disconnect();
     }
-  }, [disconnect, onTransfer, userBio, sendCachedHello]);
+  }, [disconnect, onTransfer, userBio, sendCachedHello]); 
 
   useEffect(() => {
     return () => { disconnect(); };

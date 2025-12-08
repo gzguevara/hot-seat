@@ -38,7 +38,8 @@ const App: React.FC = () => {
        if (connectRef.current) {
          await connectRef.current(targetChar, summary);
        }
-    }
+    },
+    characters: characters // Pass the current dynamic list of characters
   });
 
   // Keep ref updated
@@ -67,7 +68,8 @@ const App: React.FC = () => {
     if (firstJuror) {
         setActiveCharacter(firstJuror);
         // Small delay to ensure UI renders the council view before connecting
-        setTimeout(() => connect(firstJuror), 100);
+        // Increased to 200ms to allow React state updates (and Refs) to settle
+        setTimeout(() => connect(firstJuror), 200);
     }
   };
 
