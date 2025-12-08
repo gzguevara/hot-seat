@@ -1,0 +1,7 @@
+{
+  "name": "Gemini Live Tech Interview",
+  "description": "A real-time voice simulation of a Tech Lead job interview with three AI experts who dynamically switch based on the conversation topic.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
