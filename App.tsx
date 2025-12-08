@@ -5,6 +5,7 @@ import { Character, SessionStatus } from './types';
 import CharacterCard from './components/CharacterCard';
 import SetupWizard from './components/SetupWizard';
 import { useGeminiLive } from './hooks/useGeminiLive';
+import { brain } from './services/Brain';
 
 type AppState = 'setup' | 'interview';
 
@@ -91,6 +92,19 @@ const App: React.FC = () => {
 
       {appState === 'interview' && (
         <>
+          <div className="absolute top-6 right-6 z-20">
+             <button 
+                onClick={() => brain.downloadDebugLog()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 bg-gray-900/50 border border-gray-700 rounded-lg hover:text-white hover:bg-gray-800 transition-colors backdrop-blur-sm"
+                title="Download Brain Debug Logs"
+             >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Brain Logs
+            </button>
+          </div>
+
           <header className="relative z-10 text-center mb-8 animate-fade-in">
             <div className="inline-flex items-center justify-center px-4 py-1.5 mb-4 rounded-full bg-gray-800/50 border border-gray-700 text-indigo-400 text-xs font-bold tracking-wider uppercase">
               Live Session

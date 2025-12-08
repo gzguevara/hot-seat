@@ -1,6 +1,7 @@
 
 import React, { useState, ChangeEvent } from 'react';
 import { Character } from '../types';
+import { brain } from '../services/Brain';
 
 interface SetupWizardProps {
   onContextSubmitted: (desc: string, files: File[]) => void;
@@ -25,6 +26,10 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   };
 
   const handleNext = () => {
+    // Fire and forget - Do not await. Process in background.
+    brain.initializePhase1(scenario, files).catch(e => console.error("Background Brain Error:", e));
+    
+    // Proceed immediately
     onContextSubmitted(scenario, files);
     setStep(2);
   };
@@ -108,11 +113,21 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
 
       {step === 2 && (
         <div className="animate-fade-in">
-          <header className="mb-8 flex justify-between items-center">
+          <header className="mb-8 flex justify-between items-start">
             <div>
                 <h2 className="text-3xl font-bold text-white mb-2">Step 2: The Panel</h2>
                 <p className="text-gray-400">Customize your interviewers. Rename them or change their focus areas.</p>
             </div>
+            <button 
+                onClick={() => brain.downloadDebugLog()}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-400 bg-gray-800 border border-gray-600 rounded-lg hover:text-white hover:bg-gray-700 transition-colors"
+                title="Download Brain Debug Logs"
+            >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Debug Brain
+            </button>
           </header>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
