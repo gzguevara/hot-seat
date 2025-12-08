@@ -1,27 +1,37 @@
+
 import React, { useState, useCallback } from 'react';
 import { CHARACTERS } from './constants';
 import { Character, SessionStatus } from './types';
 import CharacterCard from './components/CharacterCard';
-import ActiveSession from './components/ActiveSession';
+import SetupWizard from './components/SetupWizard';
 import { useGeminiLive } from './hooks/useGeminiLive';
 
-type AppState = 'intro' | 'panel' | 'interview';
+type AppState = 'setup' | 'interview';
 
 const App: React.FC = () => {
-  const [appState, setAppState] = useState<AppState>('intro');
-  const [userBio, setUserBio] = useState('');
+  const [appState, setAppState] = useState<AppState>('setup');
+  const [contextDesc, setContextDesc] = useState('');
+  const [contextFiles, setContextFiles] = useState<File[]>([]);
+  
+  const [characters, setCharacters] = useState<Character[]>(CHARACTERS);
   const [activeCharacter, setActiveCharacter] = useState<Character | null>(null);
 
-  // Forward declaration to allow use in hook
+  // Hook Callback: Handle transfers triggered by the AI
   const handleTransfer = useCallback(async (targetCharacter: Character, summary?: string) => {
-    console.log("Transferring session to:", targetCharacter.name);
-    setActiveCharacter(targetCharacter);
-  }, []);
+    // Find the character in our state to ensure we use updated names/roles
+    const latestChar = characters.find(c => c.id === targetCharacter.id) || targetCharacter;
+    console.log("Transferring session to:", latestChar.name);
+    setActiveCharacter(latestChar);
+    
+    // Note: The actual connection logic is handled via the ref in useGeminiLive, 
+    // but updating state here triggers the UI update.
+  }, [characters]);
 
+  // We need a ref to call connect from outside the hook if needed (though mostly handled internally now)
   const connectRef = React.useRef<(c: Character, context?: string) => Promise<void>>(async () => {});
 
   const { status, volume, error, connect, disconnect } = useGeminiLive({
-    userBio,
+    userBio: contextDesc,
     onTransfer: async (targetChar, summary) => {
        await handleTransfer(targetChar, summary);
        if (connectRef.current) {
@@ -35,24 +45,29 @@ const App: React.FC = () => {
     connectRef.current = connect;
   }, [connect]);
 
-  const handleStartInterview = async () => {
-    const zephyr = CHARACTERS.find(c => c.name === 'Zephyr');
-    if (zephyr) {
-      setActiveCharacter(zephyr);
-      setAppState('interview');
-      await connect(zephyr);
-    }
-  };
-
   const handleDisconnect = async () => {
     await disconnect();
     setActiveCharacter(null);
-    setAppState('panel');
+    setAppState('setup'); // Go back to setup or stay in 'interview' with a "Restart" option? 
+                          // UX choice: Go back to setup allows re-config.
   };
 
-  const handleBioSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setAppState('panel');
+  const handleWizardContext = (desc: string, files: File[]) => {
+    setContextDesc(desc);
+    setContextFiles(files);
+  };
+
+  const handleWizardComplete = async (updatedJurors: Character[]) => {
+    setCharacters(updatedJurors);
+    setAppState('interview');
+    
+    // Auto-start the interview immediately with the first juror
+    const firstJuror = updatedJurors[0];
+    if (firstJuror) {
+        setActiveCharacter(firstJuror);
+        // Small delay to ensure UI renders the council view before connecting
+        setTimeout(() => connect(firstJuror), 100);
+    }
   };
 
   return (
@@ -64,98 +79,70 @@ const App: React.FC = () => {
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-900/20 rounded-full blur-[120px]" />
       </div>
 
-      {appState === 'intro' && (
-        <div className="relative z-10 w-full max-w-lg animate-fade-in">
-          <header className="text-center mb-8">
-            <div className="inline-flex items-center justify-center px-4 py-1.5 mb-4 rounded-full bg-gray-800/50 border border-gray-700 text-indigo-400 text-xs font-bold tracking-wider uppercase">
-              Gemini Live Interview
-            </div>
-            <h1 className="text-4xl font-extrabold text-white tracking-tight mb-4">
-              Candidate Profile
-            </h1>
-            <p className="text-gray-400">
-              Before you enter the panel, tell the interviewers a bit about yourself.
-            </p>
-          </header>
-
-          <form onSubmit={handleBioSubmit} className="bg-gray-800/50 backdrop-blur-md border border-gray-700 rounded-2xl p-8 shadow-xl">
-            <div className="mb-6">
-              <label htmlFor="bio" className="block text-sm font-medium text-gray-300 mb-2">Short Bio / Introduction</label>
-              <textarea
-                id="bio"
-                required
-                className="w-full h-32 bg-gray-900 border border-gray-600 rounded-xl p-4 text-white placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none transition-all"
-                placeholder="I am a Senior Backend Engineer with 5 years of experience in distributed systems..."
-                value={userBio}
-                onChange={(e) => setUserBio(e.target.value)}
-              />
-            </div>
-            <button
-              type="submit"
-              className="w-full py-4 text-lg font-bold text-white bg-indigo-600 rounded-xl hover:bg-indigo-500 transition-all transform hover:scale-[1.02] shadow-lg"
-            >
-              Enter Waiting Room
-            </button>
-          </form>
+      {appState === 'setup' && (
+        <div className="relative z-10 w-full flex justify-center animate-fade-in">
+           <SetupWizard 
+             initialCharacters={CHARACTERS}
+             onContextSubmitted={handleWizardContext}
+             onComplete={handleWizardComplete}
+           />
         </div>
       )}
 
-      {appState === 'panel' && (
+      {appState === 'interview' && (
         <>
-          <header className="relative z-10 text-center mb-10 sm:mb-12 animate-fade-in">
+          <header className="relative z-10 text-center mb-8 animate-fade-in">
             <div className="inline-flex items-center justify-center px-4 py-1.5 mb-4 rounded-full bg-gray-800/50 border border-gray-700 text-indigo-400 text-xs font-bold tracking-wider uppercase">
-              Powered by Gemini Live API
+              Live Session
             </div>
-            <h1 className="text-4xl sm:text-5xl font-extrabold text-white tracking-tight mb-4">
-              The <span className="text-indigo-500">Tech Lead</span> Panel
+            <h1 className="text-4xl sm:text-5xl font-extrabold text-white tracking-tight mb-2">
+              The <span className="text-indigo-500">Council</span>
             </h1>
-            <p className="text-lg text-gray-400 max-w-2xl mx-auto">
-              You are about to be grilled by three AI experts. They know your background. Good luck.
+            <p className="text-sm text-gray-400">
+                {status === 'CONNECTED' ? 'Microphone Active. Speak clearly.' : 'Establishing secure connection...'}
             </p>
           </header>
 
           <main className="relative z-10 w-full max-w-6xl mb-12 animate-fade-in">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {CHARACTERS.map((char) => (
-                  <CharacterCard 
-                    key={char.id} 
-                    character={char} 
-                  />
-                ))}
+            {/* The Council Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {characters.map((char) => {
+                    const isActive = activeCharacter?.id === char.id;
+                    return (
+                        <div key={char.id} className={`transition-all duration-500 ${isActive ? 'opacity-100 scale-105' : 'opacity-60 scale-95 grayscale-[0.5]'}`}>
+                            <CharacterCard 
+                                character={char} 
+                                isActive={isActive}
+                                status={isActive ? status : undefined}
+                                volume={isActive ? volume : undefined}
+                            />
+                        </div>
+                    );
+                })}
             </div>
           </main>
 
-          <div className="relative z-10 flex flex-col items-center gap-4 animate-fade-in">
+          <footer className="relative z-10 animate-fade-in">
+            {error && (
+                <div className="mb-4 px-4 py-2 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm text-center">
+                    {error}
+                </div>
+            )}
+            
             <button 
-              onClick={handleStartInterview}
-              className="group relative inline-flex items-center justify-center px-8 py-4 text-lg font-bold text-white transition-all duration-200 bg-indigo-600 rounded-full hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-600 focus:ring-offset-gray-900 shadow-xl hover:shadow-2xl hover:-translate-y-1"
+              onClick={handleDisconnect}
+              className="group relative inline-flex items-center justify-center px-8 py-3 text-base font-bold text-gray-300 transition-all duration-200 bg-gray-800 border border-gray-600 rounded-full hover:bg-red-900/20 hover:text-red-400 hover:border-red-500/50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 focus:ring-offset-gray-900"
             >
-              <span className="absolute inset-0 w-full h-full rounded-full opacity-0 group-hover:opacity-20 bg-white transition-opacity"></span>
-              <svg className="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
-              Start Interview Panel
+              <span className="w-2 h-2 rounded-full bg-red-500 mr-3 animate-pulse"></span>
+              End Session
             </button>
-            <div className="flex items-center gap-4 text-sm text-gray-500">
-              <p>Zephyr will initiate the session.</p>
-              <span className="w-1 h-1 bg-gray-600 rounded-full"></span>
-              <button onClick={() => setAppState('intro')} className="text-indigo-400 hover:text-indigo-300 transition-colors">Edit Bio</button>
-            </div>
-          </div>
+          </footer>
         </>
       )}
-
-      {appState === 'interview' && activeCharacter && (
-        <ActiveSession 
-          character={activeCharacter}
-          status={status}
-          volume={volume}
-          onDisconnect={handleDisconnect}
-          error={error}
-        />
-      )}
       
-      <footer className="relative z-10 mt-16 text-gray-600 text-sm">
-        <p>© {new Date().getFullYear()} Gemini Live Interview Simulator. Requires Microphone Access.</p>
-      </footer>
+      <div className="fixed bottom-4 right-4 z-20 text-gray-700 text-xs pointer-events-none">
+        Gemini Live API Demo
+      </div>
     </div>
   );
 };
