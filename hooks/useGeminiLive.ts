@@ -3,6 +3,8 @@ import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } f
 import { Character, SessionStatus, AudioVolumeState } from '../types';
 import { MODEL_NAME, CHARACTERS } from '../constants';
 import { pcmToGeminiBlob, base64ToUint8Array, decodeAudioData } from '../utils/audioUtils';
+import { CustomMediaRecorder } from '../utils/CustomMediaRecorder';
+import { saveTranscript } from '../utils/transcriptStorage';
 
 interface UseGeminiLiveProps {
   onTransfer: (character: Character, summary?: string) => void;
@@ -23,6 +25,9 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
   const nextStartTimeRef = useRef<number>(0);
   const scheduledSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   
+  // Custom Recorder
+  const recorderRef = useRef<CustomMediaRecorder | null>(null);
+
   // Cache for the hello.wav buffer
   const helloBufferRef = useRef<ArrayBuffer | null>(null);
 
@@ -52,7 +57,6 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
         let audioDataToDecode: ArrayBuffer;
 
         if (helloBufferRef.current) {
-          // Clone because decodeAudioData detaches the buffer
           audioDataToDecode = helloBufferRef.current.slice(0);
         } else {
           console.log("Fetching hello.wav (cache miss)...");
@@ -75,6 +79,19 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
   }, []);
 
   const disconnect = useCallback(async () => {
+    // 1. Export Recording before destroying context
+    if (recorderRef.current && recorderRef.current.hasRecordedData()) {
+        const blob = recorderRef.current.getCombinedAudioBlob();
+        
+        // Fix for empty log: Explicitly log size to prove data existence
+        console.log(`[System] Session ended. Recording ready. Size: ${blob.size} bytes`);
+        
+        // Store in the simulated app folder instead of downloading
+        await saveTranscript(blob);
+    }
+    // Reset recorder
+    recorderRef.current = null;
+
     if (inputContextRef.current) {
       await inputContextRef.current.close();
       inputContextRef.current = null;
@@ -107,6 +124,9 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
     try {
       setStatus(SessionStatus.CONNECTING);
       setError(null);
+      
+      // Initialize Recorder
+      recorderRef.current = new CustomMediaRecorder();
 
       // --- 1. Audio Setup ---
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -127,6 +147,11 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
       scriptProcessor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
         
+        // Feed User Audio to Recorder
+        if (recorderRef.current) {
+            recorderRef.current.addUserAudio(inputData);
+        }
+
         let sum = 0;
         for (let i = 0; i < inputData.length; i++) {
           sum += inputData[i] * inputData[i];
@@ -174,7 +199,6 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
       
       let systemInstruction = character.systemInstruction;
       
-      // Inject User Bio
       if (userBio && userBio.trim()) {
         systemInstruction += `\n\n[CANDIDATE INFO]: The candidate has provided the following bio: "${userBio}". Use this to tailor your questions and assess their specific background level.`;
       }
@@ -220,6 +244,11 @@ export const useGeminiLive = ({ onTransfer, userBio }: UseGeminiLiveProps) => {
             if (base64Audio && outputContextRef.current) {
                const ctx = outputContextRef.current;
                const audioData = base64ToUint8Array(base64Audio);
+
+               // Feed AI Audio to Recorder
+               if (recorderRef.current) {
+                   recorderRef.current.addAiAudio(audioData);
+               }
                
                let sum = 0;
                const sampleCheckLen = Math.min(audioData.length, 100);
