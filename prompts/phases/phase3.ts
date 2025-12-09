@@ -4,16 +4,16 @@ export const getPhase3Prompt = (
     targetJurorName: string, 
     transcript: string,
     summary: string,
-    mode: 'polite' | 'interrupt'
+    reason: string
   ) => {
     return `[PHASE 3: SUPERVISION & HANDOVER]
   
   **SITUATION:**
   The interview is in progress. 
   Current Juror (${departingJurorName}) is handing off the candidate to (${targetJurorName}).
-  **MODE:** ${mode.toUpperCase()}
+  **REASON:** ${reason}
   
-  **DEPARTING JUROR'S REASON/SUMMARY:**
+  **DEPARTING JUROR'S CONTEXT:**
   "${summary}"
   
   **RECENT TRANSCRIPT:**
@@ -26,13 +26,16 @@ export const getPhase3Prompt = (
   2. **Critique**: Did they dodge the question? Were they specific? Did they bluff?
   3. **Briefing**: Write specific instructions for ${targetJurorName}.
   
-  **HANDOVER BRIEFING RULES:**
-  ${mode === 'interrupt' 
-    ? `- **INTERRUPT MODE:** ${targetJurorName} MUST start their turn by aggressively interrupting or cutting into the conversation. e.g., "Sorry to stop you, but..." or "I have to disagree there...". The tone should be urgent.`
-    : `- **POLITE MODE:** ${targetJurorName} should acknowledge the handoff gracefully. e.g., "Thanks ${departingJurorName}. I'd like to dig into..."`
-  }
-  - Contextualize the previous answer.
-  - Suggest the next line of questioning.
+  **HANDOVER BRIEFING RULES based on REASON:**
+  1. **If "interrupted_by_juror"**: 
+     - ${targetJurorName} MUST start aggressively. e.g., "Sorry to stop you, but..." or "I have to disagree there...". 
+     - Context: The previous juror felt the candidate was weak or rambling. Attack that weakness.
+  
+  2. **If "requested_by_user"**:
+     - ${targetJurorName} should be helpful but firm. e.g., "I'm here. You wanted to discuss [Topic]?"
+  
+  3. **If "requested_by_current_juror"**:
+     - ${targetJurorName} should acknowledge the handoff gracefully. e.g., "Thanks ${departingJurorName}. I'd like to dig into..."
   
   **OUTPUT:**
   Return a JSON object with:

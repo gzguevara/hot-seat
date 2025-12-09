@@ -77,7 +77,7 @@ export class Brain {
         this.addLog('model', responseText);
         
         this.isInitialized = true;
-        console.log(`[Brain] Phase 1 Complete. Response: ${responseText}`);
+        console.log(`[Brain] Phase 1 Complete. Response received.`);
     } catch (e: any) {
         console.error("[Brain] Phase 1 Error:", e);
         this.addLog('system', `ERROR in Phase 1: ${e.message}`);
@@ -101,7 +101,7 @@ export class Brain {
         context_section: { type: Type.STRING, description: "The specific context/scenario details relevant to this juror." },
         expertise_section: { type: Type.STRING, description: "Instructions on how to behave as this expert (tone, focus)." },
         character_section: { type: Type.STRING, description: "Personality traits and behavior rules. MUST start with 'You are [Name]'." },
-        questions_section: { type: Type.STRING, description: "3-5 specific, hard-hitting questions based on the weakness map." },
+        questions_section: { type: Type.STRING, description: "EXACTLY ONE specific, hard-hitting question based on the weakness map. Do not provide a list." },
         colleagues_section: { type: Type.STRING, description: "Description of other colleagues on the panel and when to transfer to them." },
         selected_voice: { 
             type: Type.STRING, 
@@ -132,6 +132,7 @@ export class Brain {
             
             if (jsonRaw) {
                 const config = JSON.parse(jsonRaw);
+                console.log(`[Brain] Configuration received for ${juror.name}.`);
                 
                 // Substitute into Template using global replacement to ensure no placeholders are missed
                 let systemInstruction = JUROR_SYS_TEMPLATE;
@@ -180,9 +181,9 @@ export class Brain {
       targetJurorName: string, 
       transcript: string, 
       summary: string,
-      mode: 'polite' | 'interrupt' = 'polite'
+      reason: string
   ): Promise<string> {
-      console.log(`[Brain] Phase 3: Analyzing handoff (${mode}) from ${departingJurorName} to ${targetJurorName}...`);
+      console.log(`[Brain] Phase 3: Analyzing handoff (${reason}) from ${departingJurorName} to ${targetJurorName}...`);
       const session = this.getOrCreateSession();
 
       const assessmentSchema: Schema = {
@@ -195,7 +196,7 @@ export class Brain {
           required: ["grade", "critique", "handover_briefing"]
       };
 
-      const prompt = getPhase3Prompt(departingJurorName, targetJurorName, transcript, summary, mode);
+      const prompt = getPhase3Prompt(departingJurorName, targetJurorName, transcript, summary, reason);
       this.addLog('user', prompt);
 
       try {
@@ -212,7 +213,7 @@ export class Brain {
 
           if (jsonRaw) {
               const result = JSON.parse(jsonRaw);
-              console.log("[Brain] Supervision Assessment:", result);
+              console.log("[Brain] Supervision Assessment completed.");
               return `<HISTORY>\n[SUPERVISOR UPDATE]:\nLast Grade: ${result.grade}/100\nCritique: ${result.critique}\n\n${result.handover_briefing}\n</HISTORY>`;
           }
 
@@ -221,7 +222,7 @@ export class Brain {
           this.addLog('system', `Phase 3 Error: ${e.message}`);
       }
 
-      return `<HISTORY>\nTransfer from ${departingJurorName}. Mode: ${mode}. Summary: ${summary}\n</HISTORY>`;
+      return `<HISTORY>\nTransfer from ${departingJurorName}. Reason: ${reason}. Summary: ${summary}\n</HISTORY>`;
   }
 
   private fileToBase64(file: File): Promise<string> {

@@ -1,4 +1,5 @@
 
+
 import { Character } from "../../types";
 
 export const getPhase2Prompt = (juror: Character, allJurors: Character[]) => {
@@ -26,7 +27,8 @@ export const getPhase2Prompt = (juror: Character, allJurors: Character[]) => {
   
   1. **Character Section**: Start by explicitly stating "You are ${juror.name}". Define the persona.
   2. **Colleagues Section**: Explain who the colleagues are and when to transfer to them based on their roles.
-  3. **Voice Selection**: Choose the voice that best fits the implied gender and personality of the juror name and role.
+  3. **Question Section**: Formulate EXACTLY ONE specific, critical question to ask the user. Do not create a list. This question should address one specific weakness found in the context.
+  4. **Voice Selection**: Choose the voice that best fits the implied gender and personality of the juror name and role.
   
   Return the content in JSON format matching the schema.`;
 };
