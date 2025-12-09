@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Chat, Type, Schema } from "@google/genai";
 import { BRAIN_SYS_PROMPT } from "../prompts/app_brain";
 import { getPhase1Prompt } from "../prompts/phases/phase1";
@@ -101,9 +102,14 @@ export class Brain {
         expertise_section: { type: Type.STRING, description: "Instructions on how to behave as this expert (tone, focus)." },
         character_section: { type: Type.STRING, description: "Personality traits and behavior rules. MUST start with 'You are [Name]'." },
         questions_section: { type: Type.STRING, description: "3-5 specific, hard-hitting questions based on the weakness map." },
-        colleagues_section: { type: Type.STRING, description: "Description of other colleagues on the panel and when to transfer to them." }
+        colleagues_section: { type: Type.STRING, description: "Description of other colleagues on the panel and when to transfer to them." },
+        selected_voice: { 
+            type: Type.STRING, 
+            description: "The selected voice preset based on gender/persona.",
+            enum: ["Puck", "Charon", "Kore", "Fenrir", "Zephyr"]
+        }
       },
-      required: ["context_section", "expertise_section", "character_section", "questions_section", "colleagues_section"]
+      required: ["context_section", "expertise_section", "character_section", "questions_section", "colleagues_section", "selected_voice"]
     };
 
     for (const juror of jurors) {
@@ -147,7 +153,9 @@ export class Brain {
 
                 updatedJurors.push({
                     ...juror,
-                    systemInstruction: systemInstruction
+                    systemInstruction: systemInstruction,
+                    // Apply Brain's Voice Choice
+                    voiceName: config.selected_voice || juror.voiceName
                 });
             } else {
                 updatedJurors.push(juror);
@@ -171,9 +179,10 @@ export class Brain {
       departingJurorName: string, 
       targetJurorName: string, 
       transcript: string, 
-      summary: string
+      summary: string,
+      mode: 'polite' | 'interrupt' = 'polite'
   ): Promise<string> {
-      console.log(`[Brain] Phase 3: Analyzing handoff from ${departingJurorName} to ${targetJurorName}...`);
+      console.log(`[Brain] Phase 3: Analyzing handoff (${mode}) from ${departingJurorName} to ${targetJurorName}...`);
       const session = this.getOrCreateSession();
 
       const assessmentSchema: Schema = {
@@ -181,12 +190,12 @@ export class Brain {
           properties: {
               grade: { type: Type.NUMBER, description: "Grade 0-100 of the candidate's recent performance." },
               critique: { type: Type.STRING, description: "Analysis of whether they answered the question or dodged it." },
-              handover_briefing: { type: Type.STRING, description: "Specific instructions for the next juror, summarizing the candidate's last answer and suggesting a follow-up." }
+              handover_briefing: { type: Type.STRING, description: "Specific instructions for the next juror." }
           },
           required: ["grade", "critique", "handover_briefing"]
       };
 
-      const prompt = getPhase3Prompt(departingJurorName, targetJurorName, transcript, summary);
+      const prompt = getPhase3Prompt(departingJurorName, targetJurorName, transcript, summary, mode);
       this.addLog('user', prompt);
 
       try {
@@ -212,7 +221,7 @@ export class Brain {
           this.addLog('system', `Phase 3 Error: ${e.message}`);
       }
 
-      return `<HISTORY>\nTransfer from ${departingJurorName}. Summary: ${summary}\n</HISTORY>`;
+      return `<HISTORY>\nTransfer from ${departingJurorName}. Mode: ${mode}. Summary: ${summary}\n</HISTORY>`;
   }
 
   private fileToBase64(file: File): Promise<string> {

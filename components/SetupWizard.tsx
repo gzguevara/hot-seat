@@ -9,7 +9,6 @@ interface SetupWizardProps {
   initialCharacters: Character[];
 }
 
-const VOICES: Array<Character['voiceName']> = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
 const COLORS = ['bg-emerald-600', 'bg-indigo-600', 'bg-purple-700', 'bg-rose-600', 'bg-amber-600', 'bg-cyan-600'];
 
 const SetupWizard: React.FC<SetupWizardProps> = ({ 
@@ -58,14 +57,15 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
         // 2. Fallback: Create a new generic juror
         const newId = `char_${Date.now()}`;
         const randomColor = COLORS[jurors.length % COLORS.length];
-        const randomVoice = VOICES[jurors.length % VOICES.length];
+        // Voice will be overwritten by Brain, just set a default
+        const defaultVoice = 'Puck'; 
         
         const newJuror: Character = {
             id: newId,
             name: `Juror ${jurors.length + 1}`,
             role: 'Expert Observer',
             description: 'Focused on asking clarifying questions.',
-            voiceName: randomVoice,
+            voiceName: defaultVoice,
             avatarUrl: `https://picsum.photos/seed/${newId}/300/300`,
             color: randomColor,
             systemInstruction: 'You are a helpful interviewer.'
@@ -165,7 +165,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
           <header className="mb-8 flex flex-wrap gap-4 justify-between items-start">
             <div>
                 <h2 className="text-3xl font-bold text-white mb-2">Step 2: The Panel</h2>
-                <p className="text-gray-400">Customize your interviewers. Rename them, change voices, or adjust their focus.</p>
+                <p className="text-gray-400">Customize your interviewers. The AI will automatically assign a suitable voice based on the persona.</p>
             </div>
             <button 
                 onClick={() => brain.downloadDebugLog()}
@@ -220,15 +220,11 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                             className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none"
                         />
                     </div>
-                    <div className="w-1/3">
-                        <label className="text-xs text-gray-500 uppercase font-bold tracking-wider">Voice</label>
-                        <select
-                            value={juror.voiceName}
-                            onChange={(e) => handleJurorChange(idx, 'voiceName', e.target.value)}
-                            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none"
-                        >
-                            {VOICES.map(v => <option key={v} value={v}>{v}</option>)}
-                        </select>
+                    {/* Voice Selection Removed - Handled by Brain */}
+                    <div className="w-1/3 flex flex-col justify-end">
+                         <div className="px-2 py-1.5 text-xs text-indigo-300 bg-indigo-900/30 rounded border border-indigo-500/30 text-center font-medium">
+                            Voice: Auto
+                         </div>
                     </div>
                 </div>
 

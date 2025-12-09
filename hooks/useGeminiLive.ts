@@ -190,9 +190,10 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
       const currentCharacters = charactersRef.current;
       const colleagues = currentCharacters.filter(c => c.id !== character.id);
       
-      const transferTool: FunctionDeclaration = {
-        name: 'transferToColleague',
-        description: `Transfer the conversation to one of your colleagues: ${colleagues.map(c => c.name).join(', ')}. Use this when the user's question is better suited for their expertise.`,
+      // Tool 1: AskToTransfer (Polite)
+      const askToTransferTool: FunctionDeclaration = {
+        name: 'AskToTransfer',
+        description: `Use this tool ONLY after the user has explicitly agreed to move on to a colleague.`,
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -203,10 +204,31 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
             },
             summary: {
               type: Type.STRING,
-              description: "A summary of the conversation so far, explaining why you are transferring and what the user is asking about."
+              description: "A summary of the discussion so far."
             }
           },
           required: ['targetName', 'summary']
+        }
+      };
+
+      // Tool 2: simulateInterrupt (Abrupt)
+      const simulateInterruptTool: FunctionDeclaration = {
+        name: 'simulateInterrupt',
+        description: `Use this tool to spontaneously interrupt the current conversation and hand off to a colleague immediately, without asking the user.`,
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            targetName: {
+              type: Type.STRING,
+              description: "The name of the colleague who is interrupting.",
+              enum: colleagues.map(c => c.name)
+            },
+            reason: {
+              type: Type.STRING,
+              description: "The reason for the interruption (e.g., 'Disagree with premise', 'Time constraint', 'Critical flaw detected')."
+            }
+          },
+          required: ['targetName', 'reason']
         }
       };
 
@@ -236,7 +258,7 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
             voiceConfig: { prebuiltVoiceConfig: { voiceName: character.voiceName } }
           },
           systemInstruction: systemInstruction,
-          tools: [{ functionDeclarations: [transferTool] }]
+          tools: [{ functionDeclarations: [askToTransferTool, simulateInterruptTool] }]
         },
         callbacks: {
           onopen: () => {
@@ -267,14 +289,25 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
 
             // --- Tool Calling (Handoff) ---
             if (message.toolCall) {
-              const call = message.toolCall.functionCalls.find(fc => fc.name === 'transferToColleague');
-              if (call) {
-                const args = call.args as any;
-                const targetChar = charactersRef.current.find(c => c.name === args.targetName);
+              // Check for either tool
+              const transferCall = message.toolCall.functionCalls.find(fc => fc.name === 'AskToTransfer');
+              const interruptCall = message.toolCall.functionCalls.find(fc => fc.name === 'simulateInterrupt');
+              
+              const activeCall = transferCall || interruptCall;
+
+              if (activeCall) {
+                const args = activeCall.args as any;
+                const targetName = args.targetName;
+                // If it's an interrupt, the summary is the 'reason'
+                const summary = transferCall ? args.summary : `INTERRUPTION: ${args.reason}`;
+                const transferMode = transferCall ? 'polite' : 'interrupt';
+
+                const targetChar = charactersRef.current.find(c => c.name === targetName);
                 
                 if (targetChar) {
-                   console.log("[Transfer] Initiating Brain Phase 3 Analysis...");
+                   console.log(`[Transfer] Initiating Fast Handoff (${transferMode})...`);
                    
+                   // Flush pending transcripts
                    if (currentInputRef.current.trim()) {
                         transcriptBufferRef.current.push(`Candidate: ${currentInputRef.current.trim()}`);
                         currentInputRef.current = "";
@@ -289,24 +322,53 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
 
                    await disconnect();
                    
-                   const newHistorySection = await brain.initializePhase3(
-                       currentName, 
-                       targetChar.name, 
-                       transcriptHistory, 
-                       args.summary
-                   );
-
-                   const updatedInstruction = targetChar.systemInstruction.replace(
-                       /<HISTORY>[\s\S]*?<\/HISTORY>/, 
-                       newHistorySection
-                   );
+                   // -------------------------------------------------------------------------
+                   // FAST HANDOFF LOGIC (No Await)
+                   // We construct a temporary "Action Prompt" so the new model knows what to do
+                   // immediately, without waiting for the full Brain supervision.
+                   // -------------------------------------------------------------------------
                    
+                   const fastInstruction = `
+<HISTORY>
+[SYSTEM EVENT: IMMEDIATE HANDOVER]
+FROM: ${currentName}
+TO: ${targetChar.name}
+MODE: ${transferMode.toUpperCase()}
+CONTEXT/REASON: "${summary}"
+
+INSTRUCTION:
+${transferMode === 'interrupt' 
+? `You are interrupting ${currentName} because: "${summary}". Speak immediately and aggressively. Do not wait.` 
+: `You are taking over from ${currentName}. Context: "${summary}". Transition smoothly.`}
+</HISTORY>`;
+
+                   let updatedInstruction = "";
+                   if (targetChar.systemInstruction.includes('<HISTORY>')) {
+                        updatedInstruction = targetChar.systemInstruction.replace(
+                            /<HISTORY>[\s\S]*?<\/HISTORY>/, 
+                            fastInstruction
+                        );
+                   } else {
+                        updatedInstruction = targetChar.systemInstruction + "\n\n" + fastInstruction;
+                   }
+
                    const updatedTargetChar = {
                        ...targetChar,
                        systemInstruction: updatedInstruction
                    };
 
-                   onTransfer(updatedTargetChar, args.summary);
+                   // Execute Transfer Immediately (UI + Connection)
+                   onTransfer(updatedTargetChar, summary);
+
+                   // Fire and forget: Brain Supervision for logging/future context
+                   brain.initializePhase3(
+                       currentName, 
+                       targetChar.name, 
+                       transcriptHistory, 
+                       summary,
+                       transferMode
+                   ).catch(e => console.error("Background Brain Error:", e));
+
                    return;
                 }
               }
@@ -333,7 +395,6 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
                 if (audioPlayerRef.current) {
                     audioPlayerRef.current.stop();
                 }
-                // No need to reset nextStartTimeRef manually here as player handles it
             }
           },
           onclose: () => {
