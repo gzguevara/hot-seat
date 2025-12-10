@@ -31,9 +31,16 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   const [scenario, setScenario] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   
-  // Start with just the first juror
-  const [jurors, setJurors] = useState<Character[]>([{...initialCharacters[0], tickets: 1}]);
+  // Start with 2 jurors by default
+  const [jurors, setJurors] = useState<Character[]>(
+      initialCharacters.slice(0, 2).map(c => ({...c, tickets: 1}))
+  );
   
+  // Store a potential 3rd juror (either generated or from presets) that is hidden by default
+  const [spareJuror, setSpareJuror] = useState<Character | null>(
+      initialCharacters[2] ? {...initialCharacters[2], tickets: 1} : null
+  );
+
   // Interview Depth (Total Tickets)
   const [depth, setDepth] = useState<'short' | 'medium' | 'long'>('medium');
 
@@ -92,10 +99,19 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
     const generatedJurors = await brain.generateJurorPersonas();
     
     if (generatedJurors && generatedJurors.length > 0) {
-        setJurors(generatedJurors);
+        // Only show the first 2 generated jurors
+        setJurors(generatedJurors.slice(0, 2));
+        
+        // Cache the 3rd one as a spare if the user wants to add it later
+        if (generatedJurors.length > 2) {
+            setSpareJuror(generatedJurors[2]);
+        } else {
+            setSpareJuror(null);
+        }
     } else {
-        // Fallback if generation fails
-        setJurors(initialCharacters.map(c => ({...c, tickets: 1})));
+        // Fallback: Use presets if generation fails
+        setJurors(initialCharacters.slice(0, 2).map(c => ({...c, tickets: 1})));
+        setSpareJuror(initialCharacters[2] ? {...initialCharacters[2], tickets: 1} : null);
     }
     
     // Proceed
@@ -111,9 +127,17 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   };
 
   const handleAddJuror = () => {
-    if (jurors.length >= 5) return;
+    // Limit max jurors to 3
+    if (jurors.length >= 3) return;
 
-    // 1. Try to find a preset from initialCharacters that isn't currently used
+    // 1. First priority: Use the spare generated juror if available
+    if (spareJuror) {
+        setJurors([...jurors, spareJuror]);
+        setSpareJuror(null);
+        return;
+    }
+
+    // 2. Second priority: Try to find a preset from initialCharacters that isn't currently used
     const unusedPreset = initialCharacters.find(
         preset => !jurors.some(current => current.id === preset.id)
     );
@@ -121,7 +145,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
     if (unusedPreset) {
         setJurors([...jurors, { ...unusedPreset, tickets: 1 }]);
     } else {
-        // 2. Fallback: Create a new generic juror
+        // 3. Fallback: Create a new generic juror
         const newId = `char_${Date.now()}`;
         const randomColor = COLORS[jurors.length % COLORS.length];
         
@@ -143,9 +167,19 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
 
   const handleRemoveJuror = (index: number) => {
       if (jurors.length <= 1) return;
+      
       const updated = [...jurors];
+      // Capture the one being removed
+      const removed = updated[index];
+      
       updated.splice(index, 1);
       setJurors(updated);
+
+      // If we don't have a spare, or if this was a generated/custom one, 
+      // we might want to recycle it as the spare (optional behavior, keeping it simple for now)
+      if (!spareJuror) {
+          setSpareJuror(removed);
+      }
   };
 
   const handleConfigureHotSeat = async () => {
@@ -212,7 +246,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
 
           <div className="space-y-6">
             <div>
-              <label className="block text-xs font-bold text-red-500 uppercase tracking-wider mb-2">Scenario / Job Description</label>
+              <label className="block text-xs font-bold text-red-500 uppercase tracking-wider mb-2">Scenario</label>
               <textarea
                 value={scenario}
                 onChange={(e) => setScenario(e.target.value)}
@@ -226,13 +260,15 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                 Supporting Docs (PDF, TXT, IMAGES)
               </label>
               <p className="text-gray-500 text-xs mb-3 font-mono leading-relaxed">
-                  Upload your Pitch Deck, Resume, or Technical Diagrams. The Brain will analyze these to cross-reference your claims.
+                  Upload your Pitch Deck (PDF), Resume, or Technical Diagrams.
+                  <span className="block mt-1 text-red-400">Note: The model works best with PDFs. Please export PPTX/DOCX to PDF first.</span>
               </p>
               
               <div className="relative group">
                 <input
                   type="file"
                   multiple
+                  accept="application/pdf,text/*,image/*,.md,.csv"
                   onChange={handleFileChange}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
@@ -242,7 +278,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                       <span className="text-red-400 font-bold">{files.length} file(s) loaded</span>
                     ) : (
                       <span className="text-gray-600 group-hover:text-red-400 font-mono text-sm uppercase tracking-wider">
-                          Drop Files Here
+                          Drop Files Here (PDF, IMG, TXT)
                       </span>
                     )}
                   </div>
@@ -278,7 +314,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
             </div>
             <div className="flex gap-3">
                 {/* Add Juror Button (Small, in Header) */}
-                {jurors.length < 5 && (
+                {jurors.length < 3 && (
                     <button 
                         onClick={handleAddJuror}
                         className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-white bg-red-900/50 border border-red-800 rounded-lg hover:bg-red-800 transition-colors uppercase tracking-wider"
@@ -333,10 +369,11 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
              </div>
           </div>
 
-          {/* Responsive Grid List */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+          {/* Responsive Grid List - CENTERED */}
+          {/* justify-center ensures they are centered when 2, and adding 3rd pushes outwards */}
+          <div className="flex flex-wrap justify-center gap-4 mb-8">
             {jurors.map((juror, idx) => (
-              <div key={juror.id} className="relative group bg-black rounded-2xl p-4 border border-gray-800 flex flex-col gap-3 transition-all hover:border-red-900">
+              <div key={juror.id} className="relative group bg-black rounded-2xl p-4 border border-gray-800 flex flex-col gap-3 transition-all hover:border-red-900 w-full md:w-[350px]">
                 
                 {/* Remove Button (Only if > 1 juror) */}
                 {jurors.length > 1 && (
