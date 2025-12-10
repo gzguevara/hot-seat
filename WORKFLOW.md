@@ -1,3 +1,4 @@
+
 # Hot Seat Application Workflow
 
 This document outlines the architectural flow of the "Hot Seat" application, specifically focusing on the GenAI decision-making processes at each phase.
@@ -183,7 +184,7 @@ END FUNCTION
 **Process Description:**
 1.  **Connection:** The User is connected via WebRTC to the active Juror's AI model (`hooks/useGeminiLive.ts`).
 2.  **Conversation:** They converse naturally. The Juror follows their specific `systemInstruction`.
-3.  **Trigger:** When the Juror is satisfied (or interrupted), they invoke the `transfer` tool (defined in `hooks/useGeminiLive.ts`).
+3.  **Trigger:** When the Juror is satisfied (or requested by user), they invoke the `transfer` tool (defined in `hooks/useGeminiLive.ts`).
 4.  **Ticket System (Client-Side Logic):**
     *   The app maintains a local counter (or "ticket") for each Juror.
     *   When a Juror finishes a turn (calls transfer), their ticket count decreases.
@@ -280,4 +281,3 @@ END LOOP
 2.  **Last Turn:** When `Sum(JurorTickets) == 1`, the final Juror enters "Final Turn Mode" (see above).
 3.  **End Panel:** Instead of transferring, this Juror invokes `endPanel()`.
 4.  **Verdict:** This triggers **Phase 4: Deliberation**, where the Brain aggregates all the grades and "Memory Summaries" to render a final Pass/Fail decision.
-

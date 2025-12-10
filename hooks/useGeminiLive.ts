@@ -1,6 +1,6 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from '@google/genai';
+import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type, StartSensitivity, EndSensitivity } from '@google/genai';
 import { Character, SessionStatus, AudioVolumeState } from '../types';
 import { MODEL_NAME } from '../constants';
 import { pcmToGeminiBlob, base64ToUint8Array } from '../utils/audioUtils';
@@ -33,9 +33,6 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   const audioPlayerRef = useRef<AudioStreamPlayer | null>(null);
   const recorderRef = useRef<CustomMediaRecorder | null>(null);
 
-  // Cache for the hello.wav buffer
-  const helloBufferRef = useRef<ArrayBuffer | null>(null);
-
   // API Reference
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
   const currentSessionRef = useRef<any>(null);
@@ -43,7 +40,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   // Data Ref to prevent stale closures
   const charactersRef = useRef(characters);
 
-  // Transcript Buffer for Brain Context
+  // Transcript Buffer for Brain Context & Saving
   const transcriptBufferRef = useRef<string[]>([]);
   const currentCharacterRef = useRef<Character | null>(null);
   
@@ -55,55 +52,32 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
     charactersRef.current = characters;
   }, [characters]);
 
-  // Pre-load hello.wav on mount
-  useEffect(() => {
-    const fetchHello = async () => {
-      try {
-        const response = await fetch('hello.wav');
-        if (response.ok) {
-          helloBufferRef.current = await response.arrayBuffer();
-        }
-      } catch (e) {
-        console.warn("Error pre-fetching hello.wav", e);
-      }
-    };
-    fetchHello();
-  }, []);
-
-  const sendCachedHello = useCallback(async (session: any) => {
+  // Sends a text turn to wake up the model immediately (Zero-Latency Trigger)
+  const sendInitialTrigger = useCallback(async (session: any) => {
     try {
-        if (!inputContextRef.current) return;
-
-        let audioDataToDecode: ArrayBuffer;
-
-        if (helloBufferRef.current) {
-          audioDataToDecode = helloBufferRef.current.slice(0);
-        } else {
-          console.log("Fetching hello.wav (cache miss)...");
-          const response = await fetch('hello.wav');
-          if (!response.ok) throw new Error("Failed to fetch hello.wav");
-          const rawBuffer = await response.arrayBuffer();
-          helloBufferRef.current = rawBuffer.slice(0);
-          audioDataToDecode = rawBuffer;
-        }
-        
-        const audioBuffer = await inputContextRef.current.decodeAudioData(audioDataToDecode);
-        const pcmData = audioBuffer.getChannelData(0);
-        const blob = pcmToGeminiBlob(pcmData, 16000);
-        
-        console.log("Sending hello.wav trigger...");
-        session.sendRealtimeInput({ media: blob });
+        console.log("Sending text trigger to wake model...");
+        // Use sendClientContent as specified in LIVE_API_CONFIG.md
+        // This forces the model to respond immediately without audio input
+        await session.sendClientContent({
+            turns: [{ 
+                role: "user", 
+                parts: [{ text: "Hello, I am here. Please introduce yourself and start the interview." }] 
+            }],
+            turnComplete: true
+        });
     } catch (e) {
-        console.error("Error sending hello.wav:", e);
+        console.error("Error sending initial trigger:", e);
     }
   }, []);
 
   const disconnect = useCallback(async () => {
-    // 1. Export Recording before destroying context
+    // 1. Export Recording & Transcript before destroying context
     if (recorderRef.current && recorderRef.current.hasRecordedData()) {
-        const blob = recorderRef.current.getCombinedAudioBlob();
-        console.log(`[System] Session ended. Recording ready. Size: ${blob.size} bytes`);
-        await saveTranscript(blob);
+        const audioBlob = recorderRef.current.getCombinedAudioBlob();
+        const textContent = transcriptBufferRef.current.join('\n');
+        
+        console.log(`[System] Session ended. Saving data...`);
+        await saveTranscript(audioBlob, textContent);
     }
     // Reset recorder
     recorderRef.current = null;
@@ -197,7 +171,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       // Consolidated Transfer Tool
       const transferTool: FunctionDeclaration = {
         name: 'transfer',
-        description: `Pass the conversation to a colleague. Use this for ANY handover (polite or interruption).`,
+        description: `Pass the conversation to a colleague. Use this for ANY handover.`,
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -209,7 +183,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
             reason: {
               type: Type.STRING,
               description: "The nature of the transfer.",
-              enum: ["requested_by_current_juror", "requested_by_user", "interrupted_by_juror"]
+              enum: ["requested_by_current_juror", "requested_by_user"]
             },
             conversation_context: {
               type: Type.STRING,
@@ -233,7 +207,11 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       const activeTools = toolsOverride ? toolsOverride : [{ functionDeclarations: [transferTool] }];
 
       // --- 3. Gemini Connection ---
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      // Use v1alpha for Affective Dialog support
+      const ai = new GoogleGenAI({ 
+          apiKey: process.env.API_KEY, 
+          httpOptions: { apiVersion: 'v1alpha' }
+      });
       
       let systemInstruction = character.systemInstruction;
       
@@ -245,17 +223,28 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       if (initialContext) {
         // Brain logic already updated instruction
       } else {
-        systemInstruction += `\n\n[SYSTEM NOTICE]: Welcome the candidate and start the interview when you hear the "Hello" trigger.`;
+        // Default prompt for start of session
+        systemInstruction += `\n\n[SYSTEM NOTICE]: When the user says Hello, introduce yourself and start the interview.`;
       }
 
       const sessionPromise = ai.live.connect({
         model: MODEL_NAME,
         config: {
           responseModalities: [Modality.AUDIO],
+          // Enable Affective Dialog
+          enableAffectiveDialog: true, 
           inputAudioTranscription: {}, 
           outputAudioTranscription: {}, 
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: character.voiceName } }
+          },
+          // Optimized VAD settings
+          realtimeInputConfig: {
+             automaticActivityDetection: {
+                 startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
+                 endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+                 silenceDurationMs: 500
+             }
           },
           systemInstruction: systemInstruction,
           tools: activeTools
@@ -345,9 +334,8 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
 
                    // 5. Construct FAST ACTION PROMPT
                    let attitudeInstruction = "";
-                   if (reason === 'interrupted_by_juror') {
-                       attitudeInstruction = `[MODE: INTERRUPT] You are interrupting ${currentJuror.name} IMMEDIATELY. They were cut off. Speak forcefully.`;
-                   } else if (reason === 'requested_by_user') {
+                   // Removed interrupted_by_juror logic
+                   if (reason === 'requested_by_user') {
                        attitudeInstruction = `[MODE: USER REQUEST] The user specifically asked to speak to you. Acknowledge this politely.`;
                    } else {
                        attitudeInstruction = `[MODE: HANDOFF] ${currentJuror.name} passed the conversation to you. Acknowledge them.`;
@@ -370,9 +358,6 @@ ${attitudeInstruction}
                    // or if generally totalRemainingTickets <= 1 (since target must have at least 1 to be selected)
                    let nextTools = undefined; // Default to transferTool
                    
-                   // Important: The targetChar we found from `charactersRef` might be stale regarding tickets if we didn't update ref manually,
-                   // but `totalRemainingTickets` uses the locally computed state.
-                   // If totalRemainingTickets is 1, it implies ONLY the targetChar has a turn left.
                    if (totalRemainingTickets <= 1) {
                        console.log("⚠️ [System] Final Turn Detected. Switching to EndPanel Tool.");
                        fastInstruction += `\n\n[SYSTEM NOTICE]: You are the FINAL juror with the LAST ticket. Ask your question, evaluate the answer, and then IMMEDIATELY call the \`endPanel\` tool to conclude the session. DO NOT TRANSFER.`;
@@ -392,13 +377,6 @@ ${attitudeInstruction}
                    
                    // Pass the nextTools (either transfer or endPanel) to the connect function
                    if (sessionPromiseRef.current === null) { 
-                        // Wait briefly to ensure state settles if needed, though disconnect() cleared ref
-                        // We actually need to return here and let the parent call connect via ref
-                        // But wait, we are inside the hook. We can call connect directly!
-                        // The `onTransfer` callback updates the App state, but we can reconnect immediately.
-                        // However, we need to pass the *new tools* to connect.
-                        // connect() reads charactersRef, so we need to be careful.
-                        // We will add a `toolsOverride` param to connect().
                         setTimeout(() => {
                              connect(updatedTargetChar, context, nextTools);
                         }, 200);
@@ -466,11 +444,11 @@ ${attitudeInstruction}
       sessionPromise.then(async sess => {
           currentSessionRef.current = sess;
           try {
-              // Initial greeting trigger
+              // Initial greeting trigger via Text (Zero Latency)
               await new Promise(resolve => setTimeout(resolve, 200));
-              await sendCachedHello(sess);
+              await sendInitialTrigger(sess);
           } catch (e) {
-              console.error("Error processing hello.wav:", e);
+              console.error("Error processing initial trigger:", e);
           }
       });
 
@@ -480,7 +458,7 @@ ${attitudeInstruction}
       setStatus(SessionStatus.ERROR);
       disconnect();
     }
-  }, [disconnect, onTransfer, onUpdateJuror, onTicketDecrement, userBio, sendCachedHello]); 
+  }, [disconnect, onTransfer, onUpdateJuror, onTicketDecrement, userBio, sendInitialTrigger]); 
 
   useEffect(() => {
     return () => { disconnect(); };
