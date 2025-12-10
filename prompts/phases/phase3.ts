@@ -6,41 +6,32 @@ export const getPhase3Prompt = (
     summary: string,
     reason: string
   ) => {
-    return `[PHASE 3: SUPERVISION & HANDOVER]
+    return `[PHASE 3: SUPERVISION & MEMORY UPDATE]
   
   **SITUATION:**
-  The interview is in progress. 
-  Current Juror (${departingJurorName}) is handing off the candidate to (${targetJurorName}).
-  **REASON:** ${reason}
+  The interview is in progress.
+  Current Juror (${departingJurorName}) has just finished their turn and is handing off to (${targetJurorName}).
   
-  **DEPARTING JUROR'S CONTEXT:**
-  "${summary}"
-  
-  **RECENT TRANSCRIPT:**
+  **TRANSCRIPT OF LAST TURN:**
   ${transcript}
   
   **YOUR TASK:**
-  You are the Supervisor Brain. Analyze the candidate's recent answers and instruct the new juror (${targetJurorName}).
+  You are the Supervisor Brain. 
+  Your goal is to update the state of the DEPARTING JUROR (${departingJurorName}) so they remember what happened and are ready for their NEXT turn later in the session.
   
-  1. **Grade** the candidate's last performance (0-100).
-  2. **Critique**: Did they dodge the question? Were they specific? Did they bluff?
-  3. **Briefing**: Write specific instructions for ${targetJurorName}.
+  1. **Analyze**: How did the candidate answer ${departingJurorName}'s question?
+  2. **Grade**: Score the performance (0-100).
+  3. **Critique**: Did they dodge? Were they specific?
+  4. **Memory Update**: Create a concise bullet point summary of what the candidate admitted or claimed.
+  5. **Future Question**: Formulate the NEXT step for ${departingJurorName} when they return.
+     - IF the candidate gave a poor or evasive answer: Formulate a hard-hitting follow-up question.
+     - IF the candidate answered satisfactorily and the topic is exhausted: Formulate a "Conclusion" statement. E.g. "I've heard enough on this. I'm satisfied. I'll pass to my colleagues."
   
-  **HANDOVER BRIEFING RULES based on REASON:**
-  1. **If "interrupted_by_juror"**: 
-     - ${targetJurorName} MUST start aggressively. e.g., "Sorry to stop you, but..." or "I have to disagree there...". 
-     - Context: The previous juror felt the candidate was weak or rambling. Attack that weakness.
-  
-  2. **If "requested_by_user"**:
-     - ${targetJurorName} should be helpful but firm. e.g., "I'm here. You wanted to discuss [Topic]?"
-  
-  3. **If "requested_by_current_juror"**:
-     - ${targetJurorName} should acknowledge the handoff gracefully. e.g., "Thanks ${departingJurorName}. I'd like to dig into..."
-  
-  **OUTPUT:**
+  **OUTPUT FORMAT:**
   Return a JSON object with:
   - grade (number)
   - critique (string)
-  - handover_briefing (string) -> Injected directly into ${targetJurorName}'s mind. Start with "CONTEXT FROM PREVIOUS TURN: ...".
+  - memory_update (string) -> e.g. "Candidate admitted they haven't solved the latency issue yet."
+  - next_question (string) -> e.g. "You mentioned earlier that latency wasn't solved. How exactly do you plan to handle peak load then?" OR "I am satisfied with the latency explanation. Passing."
   `;
   };

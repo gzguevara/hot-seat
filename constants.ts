@@ -1,3 +1,4 @@
+
 import { Character } from './types';
 
 const ZEPHYR_PROMPT = `
@@ -27,7 +28,8 @@ export const CHARACTERS: Character[] = [
     voiceName: 'Zephyr',
     avatarUrl: 'https://picsum.photos/id/60/300/300',
     color: 'bg-emerald-600',
-    systemInstruction: ZEPHYR_PROMPT
+    systemInstruction: ZEPHYR_PROMPT,
+    tickets: 1
   },
   {
     id: 'char_2',
@@ -37,7 +39,8 @@ export const CHARACTERS: Character[] = [
     voiceName: 'Fenrir',
     avatarUrl: 'https://picsum.photos/id/2/300/300',
     color: 'bg-indigo-600',
-    systemInstruction: FENRIR_PROMPT
+    systemInstruction: FENRIR_PROMPT,
+    tickets: 1
   },
   {
     id: 'char_3',
@@ -47,7 +50,8 @@ export const CHARACTERS: Character[] = [
     voiceName: 'Kore',
     avatarUrl: 'https://picsum.photos/id/532/300/300',
     color: 'bg-purple-700',
-    systemInstruction: KORE_PROMPT
+    systemInstruction: KORE_PROMPT,
+    tickets: 1
   }
 ];
 

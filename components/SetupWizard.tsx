@@ -19,8 +19,12 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   const [step, setStep] = useState<1 | 2 | 3>(1); // Step 3 is loading
   const [scenario, setScenario] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  
   // Start with just the first juror
-  const [jurors, setJurors] = useState<Character[]>([initialCharacters[0]]);
+  const [jurors, setJurors] = useState<Character[]>([{...initialCharacters[0], tickets: 1}]);
+  
+  // Interview Depth (Total Tickets)
+  const [depth, setDepth] = useState<'short' | 'medium' | 'long'>('medium');
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -52,23 +56,22 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
     );
 
     if (unusedPreset) {
-        setJurors([...jurors, unusedPreset]);
+        setJurors([...jurors, { ...unusedPreset, tickets: 1 }]);
     } else {
         // 2. Fallback: Create a new generic juror
         const newId = `char_${Date.now()}`;
         const randomColor = COLORS[jurors.length % COLORS.length];
-        // Voice will be overwritten by Brain, just set a default
-        const defaultVoice = 'Puck'; 
         
         const newJuror: Character = {
             id: newId,
             name: `Juror ${jurors.length + 1}`,
             role: 'Expert Observer',
             description: 'Focused on asking clarifying questions.',
-            voiceName: defaultVoice,
+            voiceName: 'Puck',
             avatarUrl: `https://picsum.photos/seed/${newId}/300/300`,
             color: randomColor,
-            systemInstruction: 'You are a helpful interviewer.'
+            systemInstruction: 'You are a helpful interviewer.',
+            tickets: 1
         };
         setJurors([...jurors, newJuror]);
     }
@@ -83,13 +86,30 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
 
   const handleConfigureHotSeat = async () => {
     setStep(3); // Show waiting screen
+    
+    // 1. Distribute Tickets based on Depth
+    // Short: 1 per juror (Total = N)
+    // Medium: Total ~ 2 per juror
+    // Long: Total ~ 3 per juror
+    let totalTickets = jurors.length;
+    if (depth === 'medium') totalTickets = jurors.length * 2;
+    if (depth === 'long') totalTickets = jurors.length * 3;
+
+    // Distribute tickets evenly, remainder to first few
+    const baseTickets = Math.floor(totalTickets / jurors.length);
+    const remainder = totalTickets % jurors.length;
+
+    const ticketedJurors = jurors.map((j, idx) => ({
+        ...j,
+        tickets: baseTickets + (idx < remainder ? 1 : 0)
+    }));
+
     try {
-        const updatedJurors = await brain.initializePhase2(jurors);
-        onComplete(updatedJurors);
+        const configuredJurors = await brain.initializePhase2(ticketedJurors);
+        onComplete(configuredJurors);
     } catch (e) {
         console.error("Failed to configure jurors", e);
-        // Fallback to original jurors if brain fails, or show error
-        onComplete(jurors);
+        onComplete(ticketedJurors);
     }
   };
 
@@ -165,7 +185,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
           <header className="mb-8 flex flex-wrap gap-4 justify-between items-start">
             <div>
                 <h2 className="text-3xl font-bold text-white mb-2">Step 2: The Panel</h2>
-                <p className="text-gray-400">Customize your interviewers. The AI will automatically assign a suitable voice based on the persona.</p>
+                <p className="text-gray-400">Customize your interviewers and session length.</p>
             </div>
             <button 
                 onClick={() => brain.downloadDebugLog()}
@@ -178,6 +198,25 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                 Debug Brain
             </button>
           </header>
+
+          <div className="mb-6 flex items-center gap-4 bg-gray-900/40 p-4 rounded-xl border border-gray-700">
+             <span className="text-sm font-bold text-gray-300 uppercase tracking-wider">Interview Depth:</span>
+             <div className="flex gap-2">
+                {(['short', 'medium', 'long'] as const).map((d) => (
+                    <button
+                        key={d}
+                        onClick={() => setDepth(d)}
+                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                            depth === d 
+                            ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
+                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                        } capitalize`}
+                    >
+                        {d} ({d === 'short' ? '1 Q/Juror' : d === 'medium' ? '~2 Q/Juror' : '~3 Q/Juror'})
+                    </button>
+                ))}
+             </div>
+          </div>
 
           {/* Dynamic Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
@@ -220,10 +259,9 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                             className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none"
                         />
                     </div>
-                    {/* Voice Selection Removed - Handled by Brain */}
                     <div className="w-1/3 flex flex-col justify-end">
                          <div className="px-2 py-1.5 text-xs text-indigo-300 bg-indigo-900/30 rounded border border-indigo-500/30 text-center font-medium">
-                            Voice: Auto
+                            Auto Voice
                          </div>
                     </div>
                 </div>

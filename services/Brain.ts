@@ -13,6 +13,13 @@ interface LogEntry {
   content: string;
 }
 
+export interface Phase3Result {
+    grade: number;
+    critique: string;
+    memory_update: string;
+    next_question: string;
+}
+
 export class Brain {
   private chatSession: Chat | null = null;
   private apiKey: string;
@@ -127,8 +134,13 @@ export class Brain {
                 }
             });
 
-            const jsonRaw = response.text;
-            this.addLog('model', jsonRaw || "{}");
+            let jsonRaw = response.text || "{}";
+            this.addLog('model', jsonRaw);
+
+            // Clean markdown if present
+            if (jsonRaw.includes('```')) {
+                jsonRaw = jsonRaw.replace(/```json/g, '').replace(/```/g, '');
+            }
             
             if (jsonRaw) {
                 const config = JSON.parse(jsonRaw);
@@ -175,14 +187,15 @@ export class Brain {
 
   /**
    * Phase 3: Supervision Loop (Triggered on Handoff)
+   * Analyzes the last turn and prepares the Departing Juror for their NEXT turn.
    */
-  public async initializePhase3(
+  public async Phase3Transfer(
       departingJurorName: string, 
       targetJurorName: string, 
       transcript: string, 
       summary: string,
       reason: string
-  ): Promise<string> {
+  ): Promise<Phase3Result | null> {
       console.log(`[Brain] Phase 3: Analyzing handoff (${reason}) from ${departingJurorName} to ${targetJurorName}...`);
       const session = this.getOrCreateSession();
 
@@ -191,9 +204,10 @@ export class Brain {
           properties: {
               grade: { type: Type.NUMBER, description: "Grade 0-100 of the candidate's recent performance." },
               critique: { type: Type.STRING, description: "Analysis of whether they answered the question or dodged it." },
-              handover_briefing: { type: Type.STRING, description: "Specific instructions for the next juror." }
+              memory_update: { type: Type.STRING, description: "A summary of the answer to append to the juror's history." },
+              next_question: { type: Type.STRING, description: "The NEXT question this juror should ask when they return." }
           },
-          required: ["grade", "critique", "handover_briefing"]
+          required: ["grade", "critique", "memory_update", "next_question"]
       };
 
       const prompt = getPhase3Prompt(departingJurorName, targetJurorName, transcript, summary, reason);
@@ -208,13 +222,19 @@ export class Brain {
               }
           });
 
-          const jsonRaw = response.text;
-          this.addLog('model', jsonRaw || "{}");
+          let jsonRaw = response.text || "{}";
+          this.addLog('model', jsonRaw);
+          
+          // Robust JSON Cleanup (Handle Markdown blocks)
+          if (jsonRaw.includes('```')) {
+              jsonRaw = jsonRaw.replace(/```json/g, '').replace(/```/g, '');
+          }
+          jsonRaw = jsonRaw.trim();
 
           if (jsonRaw) {
-              const result = JSON.parse(jsonRaw);
-              console.log("[Brain] Supervision Assessment completed.");
-              return `<HISTORY>\n[SUPERVISOR UPDATE]:\nLast Grade: ${result.grade}/100\nCritique: ${result.critique}\n\n${result.handover_briefing}\n</HISTORY>`;
+              const result = JSON.parse(jsonRaw) as Phase3Result;
+              console.log(`[Brain] Phase 3 Complete. ${departingJurorName} primed with new question: "${result.next_question.substring(0, 50)}..."`);
+              return result;
           }
 
       } catch (e: any) {
@@ -222,7 +242,7 @@ export class Brain {
           this.addLog('system', `Phase 3 Error: ${e.message}`);
       }
 
-      return `<HISTORY>\nTransfer from ${departingJurorName}. Reason: ${reason}. Summary: ${summary}\n</HISTORY>`;
+      return null;
   }
 
   private fileToBase64(file: File): Promise<string> {

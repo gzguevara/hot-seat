@@ -1,3 +1,4 @@
+
 export interface Character {
   id: string;
   name: string;
@@ -7,6 +8,7 @@ export interface Character {
   avatarUrl: string;
   systemInstruction: string;
   color: string;
+  tickets: number; // Number of questions/turns allowed
 }
 
 export enum SessionStatus {

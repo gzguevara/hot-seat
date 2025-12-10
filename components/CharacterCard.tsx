@@ -26,11 +26,14 @@ const CharacterCard: React.FC<CharacterCardProps> = ({
 
   const isConnected = status === SessionStatus.CONNECTED;
   const isConnecting = status === SessionStatus.CONNECTING;
+  const isFinished = character.tickets <= 0;
 
   return (
     <div className={`group relative rounded-2xl p-6 border transition-all duration-300 h-full flex flex-col overflow-hidden ${
       isActive 
         ? 'bg-gray-800 border-indigo-500 shadow-2xl shadow-indigo-500/20 scale-105 z-10' 
+        : isFinished
+        ? 'bg-gray-900 border-gray-800 opacity-50 grayscale'
         : 'bg-gray-800/60 border-gray-700 hover:bg-gray-800'
     }`}>
       {/* Background Gradient for Active State */}
@@ -66,16 +69,27 @@ const CharacterCard: React.FC<CharacterCardProps> = ({
         </div>
         
         <h3 className="text-2xl font-bold text-white mb-1">{character.name}</h3>
-        <p className={`text-sm font-semibold mb-3 px-2 py-0.5 rounded-full bg-gray-700/50 text-gray-300 inline-block`}>
+        <p className={`text-sm font-semibold mb-2 px-2 py-0.5 rounded-full bg-gray-700/50 text-gray-300 inline-block`}>
           {character.role}
         </p>
+
+        {/* Tickets / Turns Indicator */}
+        <div className="flex gap-1 mb-3 justify-center">
+            {character.tickets > 0 ? (
+                 Array.from({length: character.tickets}).map((_, i) => (
+                    <div key={i} className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-gray-600'}`}></div>
+                 ))
+            ) : (
+                <span className="text-[10px] uppercase font-bold text-red-500/70 border border-red-500/30 px-1.5 rounded">Finished</span>
+            )}
+        </div>
         
         <p className="text-gray-400 text-sm leading-relaxed mb-4 line-clamp-3">
           {character.description}
         </p>
 
         {/* Visualizer Area */}
-        <div className="mt-auto h-16 w-full flex items-center justify-center">
+        <div className="mt-auto h-16 w-full flex items-center justify-center mb-4">
             {isActive && isConnected ? (
                 <Visualizer 
                     inputVolume={volume.inputVolume} 
@@ -84,9 +98,24 @@ const CharacterCard: React.FC<CharacterCardProps> = ({
                 />
             ) : isActive && isConnecting ? (
                 <span className="text-xs text-indigo-400 animate-pulse uppercase tracking-widest font-bold">Connecting...</span>
+            ) : isFinished ? (
+                <div className="h-0.5 w-12 bg-gray-800 rounded-full" />
             ) : (
                 <div className="h-1 w-12 bg-gray-700 rounded-full" />
             )}
+        </div>
+
+        {/* System Prompt Debug Field */}
+        <div className="w-full text-left pt-3 border-t border-gray-700/50">
+           <label className="text-[10px] uppercase tracking-wider text-gray-500 font-bold mb-1 block">
+               System Prompt (Debug)
+           </label>
+           <textarea 
+               readOnly
+               value={character.systemInstruction}
+               className="w-full h-24 bg-gray-900/50 border border-gray-700 rounded-md text-[10px] text-gray-400 p-2 font-mono resize-y focus:outline-none focus:border-indigo-500/50 hover:bg-gray-900 transition-colors custom-scrollbar"
+               spellCheck={false}
+           />
         </div>
       </div>
     </div>

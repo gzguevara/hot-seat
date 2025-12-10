@@ -14,7 +14,8 @@ const App: React.FC = () => {
   const [contextDesc, setContextDesc] = useState('');
   const [contextFiles, setContextFiles] = useState<File[]>([]);
   
-  const [characters, setCharacters] = useState<Character[]>(CHARACTERS);
+  // Note: Characters now have 'tickets' property
+  const [characters, setCharacters] = useState<Character[]>(CHARACTERS.map(c => ({...c, tickets: 1})));
   const [activeCharacter, setActiveCharacter] = useState<Character | null>(null);
 
   // Hook Callback: Handle transfers triggered by the AI
@@ -28,6 +29,29 @@ const App: React.FC = () => {
     // but updating state here triggers the UI update.
   }, [characters]);
 
+  // Hook Callback: Background update of a specific juror's prompt (Memory Injection)
+  const handleUpdateJurorInstruction = useCallback((jurorId: string, newInstruction: string) => {
+    setCharacters(prevChars => prevChars.map(c => {
+        if (c.id === jurorId) {
+            console.log(`[App] 🧠 Updating memory/prompt for ${c.name}`);
+            return { ...c, systemInstruction: newInstruction };
+        }
+        return c;
+    }));
+  }, []);
+
+  // Hook Callback: Decrement ticket for a juror
+  const handleTicketDecrement = useCallback((jurorId: string) => {
+      setCharacters(prevChars => prevChars.map(c => {
+          if (c.id === jurorId) {
+              const newTickets = Math.max(0, c.tickets - 1);
+              console.log(`[App] 🎫 ${c.name} used a ticket. Remaining: ${newTickets}`);
+              return { ...c, tickets: newTickets };
+          }
+          return c;
+      }));
+  }, []);
+
   // We need a ref to call connect from outside the hook if needed (though mostly handled internally now)
   const connectRef = React.useRef<(c: Character, context?: string) => Promise<void>>(async () => {});
 
@@ -39,6 +63,8 @@ const App: React.FC = () => {
          await connectRef.current(targetChar, summary);
        }
     },
+    onUpdateJuror: handleUpdateJurorInstruction,
+    onTicketDecrement: handleTicketDecrement,
     characters: characters // Pass the current dynamic list of characters
   });
 
@@ -50,8 +76,7 @@ const App: React.FC = () => {
   const handleDisconnect = async () => {
     await disconnect();
     setActiveCharacter(null);
-    setAppState('setup'); // Go back to setup or stay in 'interview' with a "Restart" option? 
-                          // UX choice: Go back to setup allows re-config.
+    setAppState('setup'); 
   };
 
   const handleWizardContext = (desc: string, files: File[]) => {
@@ -68,7 +93,6 @@ const App: React.FC = () => {
     if (firstJuror) {
         setActiveCharacter(firstJuror);
         // Small delay to ensure UI renders the council view before connecting
-        // Increased to 200ms to allow React state updates (and Refs) to settle
         setTimeout(() => connect(firstJuror), 200);
     }
   };

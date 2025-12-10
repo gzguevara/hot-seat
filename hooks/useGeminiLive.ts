@@ -7,15 +7,18 @@ import { pcmToGeminiBlob, base64ToUint8Array } from '../utils/audioUtils';
 import { CustomMediaRecorder } from '../utils/CustomMediaRecorder';
 import { saveTranscript } from '../utils/transcriptStorage';
 import { brain } from '../services/Brain';
+import { updateJurorSystemPrompt } from '../utils/promptUtils';
 import { AudioStreamPlayer } from '../utils/AudioStreamPlayer';
 
 interface UseGeminiLiveProps {
   onTransfer: (character: Character, summary?: string) => void;
+  onUpdateJuror: (id: string, newInstruction: string) => void;
+  onTicketDecrement: (id: string) => void;
   userBio: string;
   characters: Character[];
 }
 
-export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLiveProps) => {
+export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, userBio, characters }: UseGeminiLiveProps) => {
   const [status, setStatus] = useState<SessionStatus>(SessionStatus.DISCONNECTED);
   const [volume, setVolume] = useState<AudioVolumeState>({ inputVolume: 0, outputVolume: 0 });
   const [error, setError] = useState<string | null>(null);
@@ -135,7 +138,7 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
     currentOutputRef.current = "";
   }, []);
 
-  const connect = useCallback(async (character: Character, initialContext?: string) => {
+  const connect = useCallback(async (character: Character, initialContext?: string, toolsOverride?: any[]) => {
     try {
       setStatus(SessionStatus.CONNECTING);
       setError(null);
@@ -187,8 +190,9 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
       scriptProcessor.connect(inputContext.destination);
 
       // --- 2. Tool Setup ---
+      // Filter out colleagues who have 0 tickets left
       const currentCharacters = charactersRef.current;
-      const colleagues = currentCharacters.filter(c => c.id !== character.id);
+      const validColleagues = currentCharacters.filter(c => c.id !== character.id && c.tickets > 0);
       
       // Consolidated Transfer Tool
       const transferTool: FunctionDeclaration = {
@@ -200,7 +204,7 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
             colleague: {
               type: Type.STRING,
               description: "The name of the colleague to transfer to.",
-              enum: colleagues.map(c => c.name)
+              enum: validColleagues.map(c => c.name)
             },
             reason: {
               type: Type.STRING,
@@ -215,6 +219,18 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
           required: ['colleague', 'reason', 'conversation_context']
         }
       };
+
+      const endPanelTool: FunctionDeclaration = {
+          name: 'endPanel',
+          description: 'Concludes the entire interview session. Call this ONLY when you are the LAST remaining juror and you have finished your questions.',
+          parameters: {
+              type: Type.OBJECT,
+              properties: {},
+          }
+      };
+
+      // Determine which tools to use. If override provided (Last Turn), use that.
+      const activeTools = toolsOverride ? toolsOverride : [{ functionDeclarations: [transferTool] }];
 
       // --- 3. Gemini Connection ---
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -242,7 +258,7 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
             voiceConfig: { prebuiltVoiceConfig: { voiceName: character.voiceName } }
           },
           systemInstruction: systemInstruction,
-          tools: [{ functionDeclarations: [transferTool] }]
+          tools: activeTools
         },
         callbacks: {
           onopen: () => {
@@ -271,10 +287,18 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
                 }
             }
 
-            // --- Tool Calling (Handoff) ---
+            // --- Tool Calling (Handoff or End) ---
             if (message.toolCall) {
               const transferCall = message.toolCall.functionCalls.find(fc => fc.name === 'transfer');
+              const endPanelCall = message.toolCall.functionCalls.find(fc => fc.name === 'endPanel');
               
+              if (endPanelCall) {
+                  console.log("[EndPanel] Session concluded by AI.");
+                  await disconnect();
+                  // Ideally trigger a "Summary/Verdict" view here
+                  return;
+              }
+
               if (transferCall) {
                 const args = transferCall.args as any;
                 const targetName = args.colleague;
@@ -282,11 +306,19 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
                 const context = args.conversation_context;
 
                 const targetChar = charactersRef.current.find(c => c.name === targetName);
-                
-                if (targetChar) {
+                const currentJuror = currentCharacterRef.current;
+
+                if (targetChar && currentJuror) {
                    console.log(`[Transfer] Switching to ${targetName} (${reason})...`);
                    
-                   // 1. Capture Transcript Context for the Brain
+                   // 1. TICKET LOGIC: Decrement Current Juror's Ticket
+                   onTicketDecrement(currentJuror.id);
+                   // Update local ref simulation for immediate logic
+                   const updatedCharacters = charactersRef.current.map(c => 
+                       c.id === currentJuror.id ? {...c, tickets: c.tickets - 1} : c
+                   );
+                   
+                   // 2. Capture Transcript
                    if (currentInputRef.current.trim()) {
                         transcriptBufferRef.current.push(`Candidate: ${currentInputRef.current.trim()}`);
                         currentInputRef.current = "";
@@ -296,32 +328,56 @@ export const useGeminiLive = ({ onTransfer, userBio, characters }: UseGeminiLive
                         currentOutputRef.current = "";
                    }
                    const transcriptHistory = transcriptBufferRef.current.join('\n');
-                   const currentName = currentCharacterRef.current?.name || "Interviewer";
 
-                   // 2. IMMEDIATE DISCONNECT to free up audio
+                   // 3. IMMEDIATE DISCONNECT
                    await disconnect();
                    
-                   // 3. Construct FAST ACTION PROMPT for the new session
-                   // Determine attitude based on reason
+                   // 4. ROSTER INJECTION & FINAL TURN CHECK
+                   // Calculate remaining total tickets across ALL jurors
+                   // Note: We use updatedCharacters where the current decrement is applied
+                   const totalRemainingTickets = updatedCharacters.reduce((sum, c) => sum + c.tickets, 0);
+                   
+                   // Identify finished jurors for the Blocked List
+                   const finishedJurors = updatedCharacters.filter(c => c.tickets <= 0).map(c => c.name);
+                   const blockedListText = finishedJurors.length > 0 
+                       ? `[ROSTER UPDATE]: The following jurors have finished their questioning and are UNAVAILABLE: ${finishedJurors.join(', ')}. DO NOT transfer to them.`
+                       : "";
+
+                   // 5. Construct FAST ACTION PROMPT
                    let attitudeInstruction = "";
                    if (reason === 'interrupted_by_juror') {
-                       attitudeInstruction = `[MODE: INTERRUPT] You are interrupting ${currentName} IMMEDIATELY. They were cut off. Speak forcefully and pick up exactly where the concern lies.`;
+                       attitudeInstruction = `[MODE: INTERRUPT] You are interrupting ${currentJuror.name} IMMEDIATELY. They were cut off. Speak forcefully.`;
                    } else if (reason === 'requested_by_user') {
-                       attitudeInstruction = `[MODE: USER REQUEST] The user specifically asked to speak to you. Acknowledge this politely ("I'm here. What's on your mind?").`;
+                       attitudeInstruction = `[MODE: USER REQUEST] The user specifically asked to speak to you. Acknowledge this politely.`;
                    } else {
-                       attitudeInstruction = `[MODE: HANDOFF] ${currentName} passed the conversation to you. Acknowledge them ("Thanks ${currentName}") and seamlessly continue the inquiry.`;
+                       attitudeInstruction = `[MODE: HANDOFF] ${currentJuror.name} passed the conversation to you. Acknowledge them.`;
                    }
 
-                   const fastInstruction = `
+                   let fastInstruction = `
 [SYSTEM EVENT: LIVE TRANSFER]
-FROM: ${currentName}
+FROM: ${currentJuror.name}
 TO: ${targetChar.name}
 REASON: ${reason}
 CONTEXT: "${context}"
+${blockedListText}
 
 INSTRUCTION:
 ${attitudeInstruction}
 `;
+
+                   // 6. LAST MAN STANDING LOGIC
+                   // If the TARGET juror has the LAST remaining ticket (total == 1 and target has it),
+                   // or if generally totalRemainingTickets <= 1 (since target must have at least 1 to be selected)
+                   let nextTools = undefined; // Default to transferTool
+                   
+                   // Important: The targetChar we found from `charactersRef` might be stale regarding tickets if we didn't update ref manually,
+                   // but `totalRemainingTickets` uses the locally computed state.
+                   // If totalRemainingTickets is 1, it implies ONLY the targetChar has a turn left.
+                   if (totalRemainingTickets <= 1) {
+                       console.log("⚠️ [System] Final Turn Detected. Switching to EndPanel Tool.");
+                       fastInstruction += `\n\n[SYSTEM NOTICE]: You are the FINAL juror with the LAST ticket. Ask your question, evaluate the answer, and then IMMEDIATELY call the \`endPanel\` tool to conclude the session. DO NOT TRANSFER.`;
+                       nextTools = [{ functionDeclarations: [endPanelTool] }];
+                   }
 
                    // Prepend to ensure high priority
                    let updatedInstruction = fastInstruction + "\n\n" + targetChar.systemInstruction;
@@ -331,17 +387,40 @@ ${attitudeInstruction}
                        systemInstruction: updatedInstruction
                    };
 
-                   // 4. Trigger UI update & New Connection
+                   // 7. Trigger UI update & New Connection
                    onTransfer(updatedTargetChar, context);
+                   
+                   // Pass the nextTools (either transfer or endPanel) to the connect function
+                   if (sessionPromiseRef.current === null) { 
+                        // Wait briefly to ensure state settles if needed, though disconnect() cleared ref
+                        // We actually need to return here and let the parent call connect via ref
+                        // But wait, we are inside the hook. We can call connect directly!
+                        // The `onTransfer` callback updates the App state, but we can reconnect immediately.
+                        // However, we need to pass the *new tools* to connect.
+                        // connect() reads charactersRef, so we need to be careful.
+                        // We will add a `toolsOverride` param to connect().
+                        setTimeout(() => {
+                             connect(updatedTargetChar, context, nextTools);
+                        }, 200);
+                   }
 
-                   // 5. Fire and forget: Brain Supervision for future context
-                   brain.initializePhase3(
-                       currentName, 
+                   // 8. Fire and forget: Brain Supervision
+                   brain.Phase3Transfer(
+                       currentJuror.name, 
                        targetChar.name, 
                        transcriptHistory, 
                        context,
                        reason
-                   ).catch(e => console.error("Background Brain Error:", e));
+                   ).then((result) => {
+                       if (result) {
+                           const newPrompt = updateJurorSystemPrompt(
+                               currentJuror.systemInstruction, 
+                               result.next_question, 
+                               result.memory_update
+                           );
+                           onUpdateJuror(currentJuror.id, newPrompt);
+                       }
+                   }).catch(e => console.error("Background Brain Error:", e));
 
                    return;
                 }
@@ -401,7 +480,7 @@ ${attitudeInstruction}
       setStatus(SessionStatus.ERROR);
       disconnect();
     }
-  }, [disconnect, onTransfer, userBio, sendCachedHello]); 
+  }, [disconnect, onTransfer, onUpdateJuror, onTicketDecrement, userBio, sendCachedHello]); 
 
   useEffect(() => {
     return () => { disconnect(); };
