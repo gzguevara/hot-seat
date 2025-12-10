@@ -19,6 +19,32 @@ interface UseGeminiLiveProps {
   onComplete?: (transcript: string) => void;
 }
 
+// Helper to strip transfer logic and inject endPanel logic
+const convertToFinalJurorPrompt = (basePrompt: string) => {
+    // Matches from "**TRANSITION RULES" until "# 1. CONTEXT"
+    // This replaces the instruction to use 'transfer' with instructions to use 'endPanel'
+    const transitionSectionRegex = /\*\*TRANSITION RULES \(CRITICAL\):\*\*[\s\S]*?(?=# 1\. CONTEXT)/;
+    
+    const finalInstructions = `
+**SESSION CONCLUSION RULES (CRITICAL):**
+You are the FINAL juror. The user has passed the previous interviews.
+Your Goal: Ask your specific assigned question. Dig deep.
+Ending: When you are satisfied with the answer (or if the user fails to answer), you MUST call the \`endPanel\` tool.
+- DO NOT pass to a colleague.
+- DO NOT say "I will transfer you".
+- Say "Thank you, that concludes our session." and call \`endPanel\`.
+
+**Tool Usage:**
+Call \`endPanel({})\` to finish.
+`;
+
+    if (transitionSectionRegex.test(basePrompt)) {
+        return basePrompt.replace(transitionSectionRegex, finalInstructions);
+    } else {
+        return basePrompt + "\n\n" + finalInstructions;
+    }
+};
+
 export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, userBio, characters, onComplete }: UseGeminiLiveProps) => {
   const [status, setStatus] = useState<SessionStatus>(SessionStatus.DISCONNECTED);
   const [volume, setVolume] = useState<AudioVolumeState>({ inputVolume: 0, outputVolume: 0 });
@@ -54,7 +80,6 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   }, [characters]);
 
   // Sends a text turn to wake up the model immediately (Zero-Latency Trigger)
-  // This replaces the need for a physical "hello.wav" file.
   const sendInitialTrigger = useCallback(async (session: any) => {
     try {
         console.log("Sending text trigger to wake model...");
@@ -136,7 +161,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       const source = inputContext.createMediaStreamSource(stream);
       inputSourceRef.current = source;
       
-      const scriptProcessor = inputContext.createScriptProcessor(1024, 1, 1);
+      const scriptProcessor = inputContext.createScriptProcessor(2048, 1, 1);
       processorRef.current = scriptProcessor;
 
       scriptProcessor.onaudioprocess = (e) => {
@@ -167,11 +192,9 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       scriptProcessor.connect(inputContext.destination);
 
       // --- 2. Tool Setup ---
-      // Filter out colleagues who have 0 tickets left
       const currentCharacters = charactersRef.current;
       const validColleagues = currentCharacters.filter(c => c.id !== character.id && c.tickets > 0);
       
-      // Consolidated Transfer Tool
       const transferTool: FunctionDeclaration = {
         name: 'transfer',
         description: `Pass the conversation to a colleague. Use this for ANY handover (polite or interruption).`,
@@ -206,25 +229,34 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
           }
       };
 
-      // Determine which tools to use. If override provided (Last Turn), use that.
-      const activeTools = toolsOverride ? toolsOverride : [{ functionDeclarations: [transferTool] }];
+      // Determine which tools to use. 
+      let activeTools = toolsOverride;
+      let systemInstruction = character.systemInstruction;
+
+      if (!activeTools) {
+          if (validColleagues.length === 0) {
+              console.log("[System] No colleagues available (Final Turn / Single Juror). Enforcing EndPanel.");
+              activeTools = [{ functionDeclarations: [endPanelTool] }];
+              // Force replace the instruction
+              systemInstruction = convertToFinalJurorPrompt(systemInstruction);
+          } else {
+              activeTools = [{ functionDeclarations: [transferTool] }];
+          }
+      }
 
       // --- 3. Gemini Connection ---
-      // Use v1alpha for affective dialog support
       const ai = new GoogleGenAI({ 
           apiKey: process.env.API_KEY, 
           httpOptions: { apiVersion: 'v1alpha' }
       });
       
-      let systemInstruction = character.systemInstruction;
-      
-      // Inject Initial Context if provided (from previous handoff or start)
+      // Inject Initial Context if provided
       if (userBio && userBio.trim()) {
         systemInstruction += `\n\n[CANDIDATE INFO]: "${userBio}".`;
       }
 
       if (initialContext) {
-        // Brain logic already updated instruction
+        // Brain logic already updated instruction via onUpdateJuror / transfer logic
       } else {
         systemInstruction += `\n\n[SYSTEM NOTICE]: When the user says Hello, introduce yourself and start the interview.`;
       }
@@ -233,14 +265,12 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
         model: MODEL_NAME,
         config: {
           responseModalities: [Modality.AUDIO],
-          // Enable Affective Dialog
           enableAffectiveDialog: true, 
           inputAudioTranscription: {}, 
           outputAudioTranscription: {},
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: character.voiceName } }
           },
-          // Optimized VAD settings
           realtimeInputConfig: {
              automaticActivityDetection: {
                  startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
@@ -285,7 +315,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
               
               if (endPanelCall) {
                   console.log("[EndPanel] Session concluded by AI.");
-                  // Capture pending text if any (optional)
+                  // Capture pending text
                   if (currentInputRef.current.trim()) transcriptBufferRef.current.push(`Candidate: ${currentInputRef.current.trim()}`);
                   if (currentOutputRef.current.trim()) transcriptBufferRef.current.push(`${character.name}: ${currentOutputRef.current.trim()}`);
                   
@@ -310,9 +340,8 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                 if (targetChar && currentJuror) {
                    console.log(`[Transfer] Switching to ${targetName} (${reason})...`);
                    
-                   // 1. TICKET LOGIC: Decrement Current Juror's Ticket
+                   // 1. TICKET LOGIC
                    onTicketDecrement(currentJuror.id);
-                   // Update local ref simulation for immediate logic
                    const updatedCharacters = charactersRef.current.map(c => 
                        c.id === currentJuror.id ? {...c, tickets: c.tickets - 1} : c
                    );
@@ -331,12 +360,9 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                    // 3. IMMEDIATE DISCONNECT
                    await disconnect();
                    
-                   // 4. ROSTER INJECTION & FINAL TURN CHECK
-                   // Calculate remaining total tickets across ALL jurors
-                   // Note: We use updatedCharacters where the current decrement is applied
+                   // 4. ROSTER & FINAL TURN CHECK
                    const totalRemainingTickets = updatedCharacters.reduce((sum, c) => sum + c.tickets, 0);
                    
-                   // Identify finished jurors for the Blocked List
                    const finishedJurors = updatedCharacters.filter(c => c.tickets <= 0).map(c => c.name);
                    const blockedListText = finishedJurors.length > 0 
                        ? `[ROSTER UPDATE]: The following jurors have finished their questioning and are UNAVAILABLE: ${finishedJurors.join(', ')}. DO NOT transfer to them.`
@@ -363,35 +389,36 @@ ${attitudeInstruction}
 `;
 
                    // 6. LAST MAN STANDING LOGIC
-                   // If the TARGET juror has the LAST remaining ticket (total == 1 and target has it),
-                   // or if generally totalRemainingTickets <= 1 (since target must have at least 1 to be selected)
                    let nextTools = undefined; // Default to transferTool
+                   let targetSystemInstruction = targetChar.systemInstruction;
                    
                    if (totalRemainingTickets <= 1) {
                        console.log("⚠️ [System] Final Turn Detected. Switching to EndPanel Tool.");
                        fastInstruction += `\n\n[SYSTEM NOTICE]: You are the FINAL juror with the LAST ticket. Ask your question, evaluate the answer, and then IMMEDIATELY call the \`endPanel\` tool to conclude the session. DO NOT TRANSFER.`;
                        nextTools = [{ functionDeclarations: [endPanelTool] }];
+                       
+                       // CRITICAL: Replace the Transfer Rules in the template with Ending Rules
+                       // to prevents model confusion.
+                       targetSystemInstruction = convertToFinalJurorPrompt(targetSystemInstruction);
                    }
 
-                   // Prepend to ensure high priority
-                   let updatedInstruction = fastInstruction + "\n\n" + targetChar.systemInstruction;
+                   let updatedInstruction = fastInstruction + "\n\n" + targetSystemInstruction;
                    
                    const updatedTargetChar = {
                        ...targetChar,
                        systemInstruction: updatedInstruction
                    };
 
-                   // 7. Trigger UI update & New Connection
+                   // 7. Trigger UI & Connection
                    onTransfer(updatedTargetChar, context);
                    
-                   // Pass the nextTools (either transfer or endPanel) to the connect function
                    if (sessionPromiseRef.current === null) { 
                         setTimeout(() => {
                              connect(updatedTargetChar, context, nextTools);
                         }, 200);
                    }
 
-                   // 8. Fire and forget: Brain Supervision
+                   // 8. Brain Supervision
                    brain.Phase3Transfer(
                        currentJuror.name, 
                        targetChar.name, 
@@ -417,13 +444,11 @@ ${attitudeInstruction}
             // --- Audio Playback & Recording ---
             const base64Audio = serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio) {
-                // 1. Record (Add to global mix)
                 if (recorderRef.current) {
                     const audioData = base64ToUint8Array(base64Audio);
                     recorderRef.current.addAiAudio(audioData);
                 }
                 
-                // 2. Play (Stream)
                 if (audioPlayerRef.current) {
                     audioPlayerRef.current.play(base64Audio, (vol) => {
                         setVolume(prev => ({ ...prev, outputVolume: vol }));

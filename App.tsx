@@ -124,16 +124,16 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex flex-col items-center justify-center p-6 sm:p-12 relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex flex-col items-center justify-center p-6 sm:p-12 relative overflow-hidden print:overflow-visible print:h-auto print:bg-none print:bg-white print:block print:p-0">
       
       {/* Background Decor */}
-      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
+      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none print:hidden">
         <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-900/20 rounded-full blur-[120px]" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-900/20 rounded-full blur-[120px]" />
       </div>
 
       {appState === 'setup' && (
-        <div className="relative z-10 w-full flex justify-center animate-fade-in">
+        <div className="relative z-10 w-full flex justify-center animate-fade-in print:hidden">
            <SetupWizard 
              initialCharacters={CHARACTERS}
              onContextSubmitted={handleWizardContext}
@@ -143,7 +143,7 @@ const App: React.FC = () => {
       )}
 
       {appState === 'analyzing' && (
-        <div className="relative z-10 flex flex-col items-center animate-fade-in">
+        <div className="relative z-10 flex flex-col items-center animate-fade-in print:hidden">
              <div className="w-24 h-24 mb-6 relative">
                  <div className="absolute inset-0 rounded-full border-t-4 border-indigo-500 animate-spin"></div>
                  <div className="absolute inset-2 rounded-full border-r-4 border-purple-500 animate-spin-reverse opacity-70"></div>
@@ -154,17 +154,19 @@ const App: React.FC = () => {
       )}
 
       {appState === 'verdict' && verdict && (
-         <div className="relative z-10 w-full flex justify-center">
-            <VerdictView 
-               verdict={verdict} 
-               onRestart={() => setAppState('setup')} 
-            />
+         <div className="absolute inset-0 z-50 overflow-y-auto bg-gray-900/95 backdrop-blur-xl animate-fade-in print:relative print:inset-auto print:bg-white print:overflow-visible print:z-auto print:h-auto">
+             <div className="min-h-full flex justify-center p-6 sm:p-12 print:p-0 print:block">
+                <VerdictView 
+                   verdict={verdict} 
+                   onRestart={() => setAppState('setup')} 
+                />
+             </div>
          </div>
       )}
 
       {appState === 'interview' && (
         <>
-          <div className="absolute top-6 right-6 z-20">
+          <div className="absolute top-6 right-6 z-20 print:hidden">
              <button 
                 onClick={() => brain.downloadDebugLog()}
                 className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 bg-gray-900/50 border border-gray-700 rounded-lg hover:text-white hover:bg-gray-800 transition-colors backdrop-blur-sm"
@@ -177,7 +179,7 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          <header className="relative z-10 text-center mb-8 animate-fade-in">
+          <header className="relative z-10 text-center mb-8 animate-fade-in print:hidden">
             <div className="inline-flex items-center justify-center px-4 py-1.5 mb-4 rounded-full bg-gray-800/50 border border-gray-700 text-indigo-400 text-xs font-bold tracking-wider uppercase">
               Live Session
             </div>
@@ -189,7 +191,7 @@ const App: React.FC = () => {
             </p>
           </header>
 
-          <main className="relative z-10 w-full max-w-6xl mb-12 animate-fade-in">
+          <main className="relative z-10 w-full max-w-6xl mb-12 animate-fade-in print:hidden">
             {/* The Council Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {characters.map((char) => {
@@ -208,7 +210,7 @@ const App: React.FC = () => {
             </div>
           </main>
 
-          <footer className="relative z-10 animate-fade-in">
+          <footer className="relative z-10 animate-fade-in print:hidden">
             {error && (
                 <div className="mb-4 px-4 py-2 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm text-center">
                     {error}
@@ -226,7 +228,7 @@ const App: React.FC = () => {
         </>
       )}
       
-      <div className="fixed bottom-4 right-4 z-20 text-gray-700 text-xs pointer-events-none">
+      <div className="fixed bottom-4 right-4 z-20 text-gray-700 text-xs pointer-events-none print:hidden">
         Gemini Live API Demo
       </div>
     </div>

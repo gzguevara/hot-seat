@@ -36,6 +36,19 @@
         background: rgba(75, 85, 99, 0.8);
         border-radius: 3px;
       }
+      
+      @media print {
+        body {
+          overflow: visible !important;
+          height: auto !important;
+          background: white !important;
+          color: black !important;
+        }
+        #root {
+            height: auto !important;
+            overflow: visible !important;
+        }
+      }
     </style>
   <script type="importmap">
 {
