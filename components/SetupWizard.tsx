@@ -17,6 +17,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   initialCharacters 
 }) => {
   const [step, setStep] = useState<1 | 2 | 3>(1); // Step 3 is loading
+  const [isGenerating, setIsGenerating] = useState(false); // New state for Phase 1.5 loading
   const [scenario, setScenario] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   
@@ -32,13 +33,26 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
     }
   };
 
-  const handleNext = () => {
-    // Fire and forget - Do not await. Process in background.
-    brain.initializePhase1(scenario, files).catch(e => console.error("Background Brain Error:", e));
+  const handleNext = async () => {
+    setIsGenerating(true);
     
-    // Proceed immediately
+    // 1. Ingest files & context (Phase 1)
+    await brain.initializePhase1(scenario, files).catch(e => console.error("Phase 1 Error:", e));
+    
+    // 2. Generate custom jurors based on that context (Phase 1.5)
+    const generatedJurors = await brain.generateJurorPersonas();
+    
+    if (generatedJurors && generatedJurors.length > 0) {
+        setJurors(generatedJurors);
+    } else {
+        // Fallback if generation fails
+        setJurors(initialCharacters.map(c => ({...c, tickets: 1})));
+    }
+    
+    // Proceed
     onContextSubmitted(scenario, files);
     setStep(2);
+    setIsGenerating(false);
   };
 
   const handleJurorChange = (index: number, field: keyof Character, value: string) => {
@@ -113,6 +127,22 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
     }
   };
 
+  // Loading Screen for Personas (Phase 1.5)
+  if (isGenerating) {
+    return (
+        <div className="w-full max-w-6xl bg-gray-800/50 backdrop-blur-md border border-gray-700 rounded-3xl p-12 shadow-2xl animate-fade-in flex flex-col items-center justify-center text-center">
+             <div className="w-20 h-20 mb-6 relative">
+                 <div className="absolute inset-0 rounded-full border-4 border-indigo-500/30"></div>
+                 <div className="absolute inset-0 rounded-full border-t-4 border-indigo-500 animate-spin"></div>
+             </div>
+             <h2 className="text-2xl font-bold text-white mb-2">Analyzing your Scenario...</h2>
+             <p className="text-gray-400 max-w-md">
+                 Reading your documents and assembling the perfect panel of experts for your interview.
+             </p>
+        </div>
+    );
+  }
+
   return (
     <div className="w-full max-w-6xl bg-gray-800/50 backdrop-blur-md border border-gray-700 rounded-3xl p-8 shadow-2xl animate-fade-in relative overflow-hidden transition-all duration-500">
       {/* Progress Indicator */}
@@ -170,7 +200,8 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
             <div className="flex justify-end pt-4">
               <button
                 onClick={handleNext}
-                className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-indigo-500/25 flex items-center gap-2"
+                disabled={!scenario && files.length === 0}
+                className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-indigo-500/25 flex items-center gap-2"
               >
                 Next: Configure Panel
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
@@ -182,21 +213,36 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
 
       {step === 2 && (
         <div className="animate-fade-in">
-          <header className="mb-8 flex flex-wrap gap-4 justify-between items-start">
+          <header className="mb-6 flex flex-wrap gap-4 justify-between items-end">
             <div>
                 <h2 className="text-3xl font-bold text-white mb-2">Step 2: The Panel</h2>
-                <p className="text-gray-400">Customize your interviewers and session length.</p>
+                <p className="text-gray-400">The Brain has proposed these experts based on your scenario. Customize if needed.</p>
             </div>
-            <button 
-                onClick={() => brain.downloadDebugLog()}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-400 bg-gray-800 border border-gray-600 rounded-lg hover:text-white hover:bg-gray-700 transition-colors"
-                title="Download Brain Debug Logs"
-            >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Debug Brain
-            </button>
+            <div className="flex gap-3">
+                {/* Add Juror Button (Small, in Header) */}
+                {jurors.length < 5 && (
+                    <button 
+                        onClick={handleAddJuror}
+                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 border border-indigo-500 rounded-lg hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-500/20"
+                    >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                        Add Juror
+                    </button>
+                )}
+                
+                <button 
+                    onClick={() => brain.downloadDebugLog()}
+                    className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-400 bg-gray-800 border border-gray-600 rounded-lg hover:text-white hover:bg-gray-700 transition-colors"
+                    title="Download Brain Debug Logs"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    Debug Brain
+                </button>
+            </div>
           </header>
 
           <div className="mb-6 flex items-center gap-4 bg-gray-900/40 p-4 rounded-xl border border-gray-700">
@@ -218,10 +264,10 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
              </div>
           </div>
 
-          {/* Dynamic Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+          {/* Horizontal Scrollable List */}
+          <div className="flex gap-6 overflow-x-auto pb-8 mb-4 snap-x custom-scrollbar px-1">
             {jurors.map((juror, idx) => (
-              <div key={juror.id} className="relative group bg-gray-900/60 rounded-2xl p-4 border border-gray-700 flex flex-col gap-3 transition-all hover:border-gray-500">
+              <div key={juror.id} className="min-w-[350px] w-[350px] relative group bg-gray-900/60 rounded-2xl p-4 border border-gray-700 flex flex-col gap-3 transition-all hover:border-gray-500 snap-center">
                 
                 {/* Remove Button (Only if > 1 juror) */}
                 {jurors.length > 1 && (
@@ -261,7 +307,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                     </div>
                     <div className="w-1/3 flex flex-col justify-end">
                          <div className="px-2 py-1.5 text-xs text-indigo-300 bg-indigo-900/30 rounded border border-indigo-500/30 text-center font-medium">
-                            Auto Voice
+                            {juror.voiceName}
                          </div>
                     </div>
                 </div>
@@ -277,21 +323,6 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                 </div>
               </div>
             ))}
-
-            {/* Add Juror Button */}
-            {jurors.length < 5 && (
-                <button 
-                    onClick={handleAddJuror}
-                    className="flex flex-col items-center justify-center min-h-[280px] rounded-2xl border-2 border-dashed border-gray-700 hover:border-indigo-500 hover:bg-gray-800/30 transition-all group"
-                >
-                    <div className="w-12 h-12 rounded-full bg-gray-800 border border-gray-600 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
-                        <svg className="w-6 h-6 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                    </div>
-                    <span className="font-bold text-gray-400 group-hover:text-white">Add Juror</span>
-                </button>
-            )}
           </div>
 
           <div className="flex justify-between items-center pt-4 border-t border-gray-700">

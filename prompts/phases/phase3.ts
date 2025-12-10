@@ -27,6 +27,8 @@ export const getPhase3Prompt = (
      - IF the candidate gave a poor or evasive answer: Formulate a hard-hitting follow-up question.
      - IF the candidate answered satisfactorily and the topic is exhausted: Formulate a "Conclusion" statement. E.g. "I've heard enough on this. I'm satisfied. I'll pass to my colleagues."
   
+  **LANGUAGE**: All outputs and generated questions must be in **ENGLISH**.
+
   **OUTPUT FORMAT:**
   Return a JSON object with:
   - grade (number)

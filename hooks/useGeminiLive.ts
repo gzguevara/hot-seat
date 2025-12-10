@@ -29,13 +29,15 @@ const convertToFinalJurorPrompt = (basePrompt: string) => {
 **SESSION CONCLUSION RULES (CRITICAL):**
 You are the FINAL juror. The user has passed the previous interviews.
 Your Goal: Ask your specific assigned question. Dig deep.
+**STYLE:** Be extremely concise. Do not waffle.
+**LANGUAGE:** ALWAYS speak English.
 Ending: When you are satisfied with the answer (or if the user fails to answer), you MUST call the \`endPanel\` tool.
 - DO NOT pass to a colleague.
 - DO NOT say "I will transfer you".
 - Say "Thank you, that concludes our session." and call \`endPanel\`.
 
 **Tool Usage:**
-Call \`endPanel({})\` to finish.
+Call \`endPanel({ reason: "interview_complete" })\` to finish.
 `;
 
     if (transitionSectionRegex.test(basePrompt)) {
@@ -86,7 +88,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
         await session.sendClientContent({
             turns: [{ 
                 role: "user", 
-                parts: [{ text: "Hello, I am here. Please introduce yourself and start the interview." }] 
+                parts: [{ text: "Hello, I am here. Please introduce yourself and start the interview. Remember to be concise and speak English." }] 
             }],
             turnComplete: true
         });
@@ -152,7 +154,17 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       audioPlayerRef.current = new AudioStreamPlayer(24000);
 
       // --- 1. Audio Setup ---
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // CRITICAL: We explicitly disable browser audio processing to ensure raw input.
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+            // @ts-ignore - latency is not in standard type but supported in some browsers
+            latency: 0
+          } 
+      });
       streamRef.current = stream;
 
       const inputContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -161,7 +173,8 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       const source = inputContext.createMediaStreamSource(stream);
       inputSourceRef.current = source;
       
-      const scriptProcessor = inputContext.createScriptProcessor(2048, 1, 1);
+      // Reduced buffer size to 1024 for lower latency (approx 64ms)
+      const scriptProcessor = inputContext.createScriptProcessor(1024, 1, 1);
       processorRef.current = scriptProcessor;
 
       scriptProcessor.onaudioprocess = (e) => {
@@ -225,7 +238,14 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
           description: 'Concludes the entire interview session. Call this ONLY when you are the LAST remaining juror and you have finished your questions.',
           parameters: {
               type: Type.OBJECT,
-              properties: {},
+              properties: {
+                  reason: {
+                      type: Type.STRING,
+                      description: "Reason for ending the session.",
+                      enum: ["interview_complete", "candidate_failure", "time_limit"]
+                  }
+              },
+              required: ['reason']
           }
       };
 
@@ -275,7 +295,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
              automaticActivityDetection: {
                  startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW,
                  endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
-                 silenceDurationMs: 500
+                 silenceDurationMs: 250
              }
           },
           systemInstruction: systemInstruction,
@@ -386,6 +406,8 @@ ${blockedListText}
 
 INSTRUCTION:
 ${attitudeInstruction}
+REMINDER: Be concise. Short questions. No fluff.
+LANGUAGE: English only.
 `;
 
                    // 6. LAST MAN STANDING LOGIC

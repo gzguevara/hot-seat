@@ -16,6 +16,8 @@ You are the Lead Auditor of this simulation. Your job is to rigorously evaluate 
    - 60-80: Solid but with gaps.
    - > 80: Exceptional mastery.
 
+**LANGUAGE**: The report, summary, and all fields MUST be in **ENGLISH**.
+
 **OUTPUT FORMAT:**
 You MUST return the result as a valid JSON object enclosed in a markdown code block (e.g., \`\`\`json ... \`\`\`).
 

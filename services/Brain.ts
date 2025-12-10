@@ -93,6 +93,95 @@ export class Brain {
   }
 
   /**
+   * Phase 1.5: Generate Juror Personas (Demo Config)
+   * Uses the context from Phase 1 to generate 3 relevant jurors.
+   */
+  public async generateJurorPersonas(): Promise<Character[]> {
+    console.log("[Brain] Phase 1.5: Generating Juror Personas...");
+    this.addLog('system', "[PHASE 1.5] Generating Juror Personas based on context...");
+
+    if (!this.chatSession) {
+        console.warn("[Brain] Session not initialized. Initializing empty...");
+        this.getOrCreateSession();
+    }
+
+    const session = this.chatSession!;
+
+    const schema: Schema = {
+        type: Type.ARRAY,
+        items: {
+            type: Type.OBJECT,
+            properties: {
+                name: { type: Type.STRING },
+                role: { type: Type.STRING },
+                description: { type: Type.STRING },
+                voiceName: { 
+                    type: Type.STRING, 
+                    // Explicitly excluding Fenrir
+                    enum: ["Puck", "Charon", "Kore", "Zephyr"] 
+                },
+                color: { 
+                    type: Type.STRING, 
+                    enum: ['bg-emerald-600', 'bg-indigo-600', 'bg-purple-700', 'bg-rose-600', 'bg-amber-600', 'bg-cyan-600'] 
+                }
+            },
+            required: ["name", "role", "description", "voiceName", "color"]
+        }
+    };
+
+    const prompt = `
+    Based on the scenario and documents provided in Phase 1, generate 3 distinct, high-quality expert interviewer personas.
+    
+    REQUIREMENTS:
+    - **Diversity:** They should cover different angles (e.g., The Skeptic, The Technical Expert, The Business/Product Lead) relevant to the user's specific scenario.
+    - **Voice:** Select a voice that fits the persona's gender/vibe. **DO NOT USE 'Fenrir'.**
+    - **Color:** Assign a distinct color.
+    
+    Output a JSON array of 3 objects.
+    `;
+
+    try {
+        const response = await session.sendMessage({
+            message: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: schema
+            }
+        });
+
+        let jsonRaw = response.text || "[]";
+        this.addLog('model', jsonRaw);
+
+        if (jsonRaw.includes('```')) {
+            jsonRaw = jsonRaw.replace(/```json/g, '').replace(/```/g, '');
+        }
+
+        const rawJurors = JSON.parse(jsonRaw);
+        
+        // Map to Character Type
+        const generatedJurors: Character[] = rawJurors.map((j: any, i: number) => ({
+            id: `char_gen_${Date.now()}_${i}`,
+            name: j.name,
+            role: j.role,
+            description: j.description,
+            voiceName: j.voiceName,
+            color: j.color,
+            avatarUrl: `https://picsum.photos/seed/${j.name.replace(/\s/g,'')}${i}/300/300`,
+            systemInstruction: "You are a helpful interviewer.", // Placeholder, filled in Phase 2
+            tickets: 1
+        }));
+
+        console.log(`[Brain] Generated ${generatedJurors.length} personas.`);
+        return generatedJurors;
+
+    } catch (e: any) {
+        console.error("[Brain] Failed to generate personas", e);
+        this.addLog('system', `Error generating personas: ${e.message}`);
+        return [];
+    }
+  }
+
+  /**
    * Phase 2: Configure Jurors (Dynamic Loop)
    */
   public async initializePhase2(jurors: Character[]): Promise<Character[]> {
@@ -114,7 +203,7 @@ export class Brain {
         selected_voice: { 
             type: Type.STRING, 
             description: "The selected voice preset based on gender/persona.",
-            enum: ["Puck", "Charon", "Kore", "Fenrir", "Zephyr"]
+            enum: ["Puck", "Charon", "Kore", "Zephyr"] // Excluded Fenrir
         }
       },
       required: ["context_section", "expertise_section", "character_section", "questions_section", "colleagues_section", "selected_voice"]
@@ -223,7 +312,7 @@ export class Brain {
               }
           });
 
-          let jsonRaw = response.text || "{}";
+          let jsonRaw = response.text || "[]"; // Fix empty fallback
           this.addLog('model', jsonRaw);
           
           // Robust JSON Cleanup (Handle Markdown blocks)
