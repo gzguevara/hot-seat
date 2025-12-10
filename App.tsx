@@ -20,6 +20,7 @@ const App: React.FC = () => {
   const [characters, setCharacters] = useState<Character[]>(CHARACTERS.map(c => ({...c, tickets: 1})));
   const [activeCharacter, setActiveCharacter] = useState<Character | null>(null);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
 
   // Hook Callback: Handle transfers triggered by the AI
   const handleTransfer = useCallback(async (targetCharacter: Character, summary?: string) => {
@@ -163,6 +164,44 @@ const App: React.FC = () => {
          </div>
       )}
 
+      {/* Debug Modal */}
+      {showDebug && (
+        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-4xl max-h-[85vh] flex flex-col shadow-2xl">
+                <div className="p-4 border-b border-gray-800 flex justify-between items-center bg-gray-950/50 rounded-t-2xl">
+                    <h3 className="text-white font-bold uppercase tracking-wider flex items-center gap-2">
+                        <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
+                        System Instructions
+                    </h3>
+                    <button 
+                        onClick={() => setShowDebug(false)} 
+                        className="text-gray-500 hover:text-white hover:bg-gray-800 px-3 py-1 rounded transition-colors text-sm font-bold"
+                    >
+                        CLOSE
+                    </button>
+                </div>
+                <div className="overflow-y-auto p-4 space-y-4 custom-scrollbar bg-[#111]">
+                    {characters.map(c => (
+                        <div key={c.id} className="bg-black border border-gray-800 rounded-lg overflow-hidden">
+                            <div className={`px-4 py-2 border-b border-gray-800 flex justify-between items-center ${activeCharacter?.id === c.id ? 'bg-red-900/10' : 'bg-gray-900/30'}`}>
+                                <div className="flex items-center gap-2">
+                                    <span className={`font-bold ${activeCharacter?.id === c.id ? 'text-red-500' : 'text-gray-300'}`}>{c.name}</span>
+                                    {activeCharacter?.id === c.id && <span className="text-[10px] bg-red-600 text-white px-1.5 rounded font-bold">LIVE</span>}
+                                </div>
+                                <span className="text-xs text-gray-500 font-mono">Questions: {c.tickets}</span>
+                            </div>
+                            <div className="p-4">
+                                <pre className="text-xs text-gray-400 font-mono whitespace-pre-wrap leading-relaxed select-text max-h-64 overflow-y-auto custom-scrollbar">
+                                    {c.systemInstruction}
+                                </pre>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+      )}
+
       {appState === 'interview' && (
         <div className="flex flex-col h-full">
           {/* Minimal Header */}
@@ -201,6 +240,21 @@ const App: React.FC = () => {
 
           {/* Call Controls Bar */}
           <footer className="h-20 bg-[#202124] flex items-center justify-center gap-6 border-t border-[#3c4043] relative z-20">
+             
+             {/* Settings Button (Bottom Left) */}
+             <div className="absolute left-6 top-1/2 -translate-y-1/2">
+                <button 
+                    onClick={() => setShowDebug(true)}
+                    className="w-10 h-10 rounded-full flex items-center justify-center text-gray-500 hover:text-white hover:bg-gray-700 transition-colors"
+                    title="View System Prompts"
+                >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                </button>
+             </div>
+
              {/* Mute Button */}
              <button 
                 onClick={toggleMute}
