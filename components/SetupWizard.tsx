@@ -228,7 +228,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   }
 
   return (
-    <div className="w-full max-w-6xl bg-black border border-gray-800 rounded-3xl p-8 shadow-2xl animate-fade-in relative overflow-hidden transition-all duration-500">
+    <div className="w-full max-w-7xl bg-black border border-gray-800 rounded-3xl p-8 shadow-2xl animate-fade-in relative overflow-hidden transition-all duration-500">
       {/* Progress Indicator */}
       <div className="absolute top-0 left-0 w-full h-1 bg-gray-900">
         <div 
@@ -369,11 +369,14 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
              </div>
           </div>
 
-          {/* Responsive Grid List - CENTERED */}
-          {/* justify-center ensures they are centered when 2, and adding 3rd pushes outwards */}
-          <div className="flex flex-wrap justify-center gap-4 mb-8">
+          {/* Responsive Grid List - CENTERED & DYNAMIC */}
+          <div className={`grid w-full gap-4 mb-8 ${
+              jurors.length === 1 ? 'grid-cols-1 max-w-md mx-auto' : 
+              jurors.length === 2 ? 'grid-cols-1 md:grid-cols-2' : 
+              'grid-cols-1 md:grid-cols-3'
+          }`}>
             {jurors.map((juror, idx) => (
-              <div key={juror.id} className="relative group bg-black rounded-2xl p-4 border border-gray-800 flex flex-col gap-3 transition-all hover:border-red-900 w-full md:w-[350px]">
+              <div key={juror.id} className="relative group bg-black rounded-2xl p-4 border border-gray-800 flex flex-col gap-3 transition-all hover:border-red-900 w-full">
                 
                 {/* Remove Button (Only if > 1 juror) */}
                 {jurors.length > 1 && (
