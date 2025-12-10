@@ -16,9 +16,10 @@ interface UseGeminiLiveProps {
   onTicketDecrement: (id: string) => void;
   userBio: string;
   characters: Character[];
+  onComplete?: (transcript: string) => void;
 }
 
-export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, userBio, characters }: UseGeminiLiveProps) => {
+export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, userBio, characters, onComplete }: UseGeminiLiveProps) => {
   const [status, setStatus] = useState<SessionStatus>(SessionStatus.DISCONNECTED);
   const [volume, setVolume] = useState<AudioVolumeState>({ inputVolume: 0, outputVolume: 0 });
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +41,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   // Data Ref to prevent stale closures
   const charactersRef = useRef(characters);
 
-  // Transcript Buffer for Brain Context & Saving
+  // Transcript Buffer for Brain Context
   const transcriptBufferRef = useRef<string[]>([]);
   const currentCharacterRef = useRef<Character | null>(null);
   
@@ -53,11 +54,10 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   }, [characters]);
 
   // Sends a text turn to wake up the model immediately (Zero-Latency Trigger)
+  // This replaces the need for a physical "hello.wav" file.
   const sendInitialTrigger = useCallback(async (session: any) => {
     try {
         console.log("Sending text trigger to wake model...");
-        // Use sendClientContent as specified in LIVE_API_CONFIG.md
-        // This forces the model to respond immediately without audio input
         await session.sendClientContent({
             turns: [{ 
                 role: "user", 
@@ -71,13 +71,11 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   }, []);
 
   const disconnect = useCallback(async () => {
-    // 1. Export Recording & Transcript before destroying context
+    // 1. Export Recording before destroying context
     if (recorderRef.current && recorderRef.current.hasRecordedData()) {
-        const audioBlob = recorderRef.current.getCombinedAudioBlob();
-        const textContent = transcriptBufferRef.current.join('\n');
-        
-        console.log(`[System] Session ended. Saving data...`);
-        await saveTranscript(audioBlob, textContent);
+        const blob = recorderRef.current.getCombinedAudioBlob();
+        console.log(`[System] Session ended. Recording ready. Size: ${blob.size} bytes`);
+        await saveTranscript(blob);
     }
     // Reset recorder
     recorderRef.current = null;
@@ -117,6 +115,11 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       setStatus(SessionStatus.CONNECTING);
       setError(null);
       currentCharacterRef.current = character;
+
+      // If no initial context is provided (fresh start), clear transcript buffer
+      if (!initialContext) {
+          transcriptBufferRef.current = [];
+      }
       
       // Initialize Recorder
       recorderRef.current = new CustomMediaRecorder();
@@ -133,7 +136,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       const source = inputContext.createMediaStreamSource(stream);
       inputSourceRef.current = source;
       
-      const scriptProcessor = inputContext.createScriptProcessor(4096, 1, 1);
+      const scriptProcessor = inputContext.createScriptProcessor(1024, 1, 1);
       processorRef.current = scriptProcessor;
 
       scriptProcessor.onaudioprocess = (e) => {
@@ -171,7 +174,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       // Consolidated Transfer Tool
       const transferTool: FunctionDeclaration = {
         name: 'transfer',
-        description: `Pass the conversation to a colleague. Use this for ANY handover.`,
+        description: `Pass the conversation to a colleague. Use this for ANY handover (polite or interruption).`,
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -207,7 +210,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       const activeTools = toolsOverride ? toolsOverride : [{ functionDeclarations: [transferTool] }];
 
       // --- 3. Gemini Connection ---
-      // Use v1alpha for Affective Dialog support
+      // Use v1alpha for affective dialog support
       const ai = new GoogleGenAI({ 
           apiKey: process.env.API_KEY, 
           httpOptions: { apiVersion: 'v1alpha' }
@@ -223,7 +226,6 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       if (initialContext) {
         // Brain logic already updated instruction
       } else {
-        // Default prompt for start of session
         systemInstruction += `\n\n[SYSTEM NOTICE]: When the user says Hello, introduce yourself and start the interview.`;
       }
 
@@ -234,7 +236,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
           // Enable Affective Dialog
           enableAffectiveDialog: true, 
           inputAudioTranscription: {}, 
-          outputAudioTranscription: {}, 
+          outputAudioTranscription: {},
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: character.voiceName } }
           },
@@ -283,8 +285,16 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
               
               if (endPanelCall) {
                   console.log("[EndPanel] Session concluded by AI.");
+                  // Capture pending text if any (optional)
+                  if (currentInputRef.current.trim()) transcriptBufferRef.current.push(`Candidate: ${currentInputRef.current.trim()}`);
+                  if (currentOutputRef.current.trim()) transcriptBufferRef.current.push(`${character.name}: ${currentOutputRef.current.trim()}`);
+                  
+                  const finalTranscript = transcriptBufferRef.current.join('\n');
                   await disconnect();
-                  // Ideally trigger a "Summary/Verdict" view here
+                  
+                  if (onComplete) {
+                      onComplete(finalTranscript);
+                  }
                   return;
               }
 
@@ -334,7 +344,6 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
 
                    // 5. Construct FAST ACTION PROMPT
                    let attitudeInstruction = "";
-                   // Removed interrupted_by_juror logic
                    if (reason === 'requested_by_user') {
                        attitudeInstruction = `[MODE: USER REQUEST] The user specifically asked to speak to you. Acknowledge this politely.`;
                    } else {
@@ -458,7 +467,7 @@ ${attitudeInstruction}
       setStatus(SessionStatus.ERROR);
       disconnect();
     }
-  }, [disconnect, onTransfer, onUpdateJuror, onTicketDecrement, userBio, sendInitialTrigger]); 
+  }, [disconnect, onTransfer, onUpdateJuror, onTicketDecrement, userBio, sendInitialTrigger, onComplete]); 
 
   useEffect(() => {
     return () => { disconnect(); };

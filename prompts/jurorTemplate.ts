@@ -18,7 +18,7 @@ Call \`transfer({ colleague: string, reason: string, conversation_context: strin
 
 1. **"requested_by_current_juror"** (Polite Handoff)
    - *Scenario:* You are satisfied with the answer and want to pass the baton.
-   - *Behavior:* Say something like, "That's clear. {{COLLEAGUE_NAME}}, what do you think about the implementation?" THEN call the tool.
+   - *Behavior:* Say something like, "Alright, thank you for your answer. I would like to hand over to {{COLLEAGUE_NAME}} now." THEN call the tool.
    
 2. **"requested_by_user"** (User Direction)
    - *Scenario:* The user explicitly asks to speak to someone else (e.g., "I want to explain the security to Kore").

@@ -1,13 +1,14 @@
 
 import React, { useState, useCallback } from 'react';
 import { CHARACTERS } from './constants';
-import { Character, SessionStatus } from './types';
+import { Character, SessionStatus, Verdict } from './types';
 import CharacterCard from './components/CharacterCard';
 import SetupWizard from './components/SetupWizard';
+import VerdictView from './components/VerdictView';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { brain } from './services/Brain';
 
-type AppState = 'setup' | 'interview';
+type AppState = 'setup' | 'interview' | 'analyzing' | 'verdict';
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>('setup');
@@ -17,6 +18,7 @@ const App: React.FC = () => {
   // Note: Characters now have 'tickets' property
   const [characters, setCharacters] = useState<Character[]>(CHARACTERS.map(c => ({...c, tickets: 1})));
   const [activeCharacter, setActiveCharacter] = useState<Character | null>(null);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
 
   // Hook Callback: Handle transfers triggered by the AI
   const handleTransfer = useCallback(async (targetCharacter: Character, summary?: string) => {
@@ -24,9 +26,6 @@ const App: React.FC = () => {
     const latestChar = characters.find(c => c.id === targetCharacter.id) || targetCharacter;
     console.log("Transferring session to:", latestChar.name);
     setActiveCharacter(latestChar);
-    
-    // Note: The actual connection logic is handled via the ref in useGeminiLive, 
-    // but updating state here triggers the UI update.
   }, [characters]);
 
   // Hook Callback: Background update of a specific juror's prompt (Memory Injection)
@@ -55,6 +54,33 @@ const App: React.FC = () => {
   // We need a ref to call connect from outside the hook if needed (though mostly handled internally now)
   const connectRef = React.useRef<(c: Character, context?: string) => Promise<void>>(async () => {});
 
+  const handleDisconnect = async () => {
+    if (disconnectRef.current) await disconnectRef.current();
+    setActiveCharacter(null);
+    if (appState !== 'analyzing') {
+        setAppState('setup');
+    }
+  };
+
+  const handleComplete = useCallback(async (fullTranscript: string) => {
+      console.log("[App] Session Complete. Starting Phase 4 Deliberation...");
+      setAppState('analyzing');
+      // Ensure audio is stopped
+      if (disconnectRef.current) await disconnectRef.current();
+      setActiveCharacter(null);
+
+      // Trigger Brain Phase 4
+      const result = await brain.initializePhase4(fullTranscript);
+      if (result) {
+          setVerdict(result);
+          setAppState('verdict');
+      } else {
+          // Fallback if brain fails
+          console.error("Analysis failed.");
+          setAppState('setup'); 
+      }
+  }, []);
+
   const { status, volume, error, connect, disconnect } = useGeminiLive({
     userBio: contextDesc,
     onTransfer: async (targetChar, summary) => {
@@ -65,19 +91,19 @@ const App: React.FC = () => {
     },
     onUpdateJuror: handleUpdateJurorInstruction,
     onTicketDecrement: handleTicketDecrement,
-    characters: characters // Pass the current dynamic list of characters
+    onComplete: handleComplete,
+    characters: characters
   });
 
-  // Keep ref updated
+  // Keep refs updated for manual calls
   React.useEffect(() => {
     connectRef.current = connect;
   }, [connect]);
+  
+  // Create a ref for disconnect so handleDisconnect can access it without circular dependency issues in useCallback
+  const disconnectRef = React.useRef(disconnect);
+  React.useEffect(() => { disconnectRef.current = disconnect; }, [disconnect]);
 
-  const handleDisconnect = async () => {
-    await disconnect();
-    setActiveCharacter(null);
-    setAppState('setup'); 
-  };
 
   const handleWizardContext = (desc: string, files: File[]) => {
     setContextDesc(desc);
@@ -114,6 +140,26 @@ const App: React.FC = () => {
              onComplete={handleWizardComplete}
            />
         </div>
+      )}
+
+      {appState === 'analyzing' && (
+        <div className="relative z-10 flex flex-col items-center animate-fade-in">
+             <div className="w-24 h-24 mb-6 relative">
+                 <div className="absolute inset-0 rounded-full border-t-4 border-indigo-500 animate-spin"></div>
+                 <div className="absolute inset-2 rounded-full border-r-4 border-purple-500 animate-spin-reverse opacity-70"></div>
+             </div>
+             <h2 className="text-3xl font-bold text-white mb-2">The Council is Deliberating</h2>
+             <p className="text-gray-400">Verifying facts, calculating score, and generating your report...</p>
+        </div>
+      )}
+
+      {appState === 'verdict' && verdict && (
+         <div className="relative z-10 w-full flex justify-center">
+            <VerdictView 
+               verdict={verdict} 
+               onRestart={() => setAppState('setup')} 
+            />
+         </div>
       )}
 
       {appState === 'interview' && (
@@ -174,7 +220,7 @@ const App: React.FC = () => {
               className="group relative inline-flex items-center justify-center px-8 py-3 text-base font-bold text-gray-300 transition-all duration-200 bg-gray-800 border border-gray-600 rounded-full hover:bg-red-900/20 hover:text-red-400 hover:border-red-500/50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 focus:ring-offset-gray-900"
             >
               <span className="w-2 h-2 rounded-full bg-red-500 mr-3 animate-pulse"></span>
-              End Session
+              Abort Session
             </button>
           </footer>
         </>

@@ -22,3 +22,17 @@ export interface AudioVolumeState {
   inputVolume: number;
   outputVolume: number;
 }
+
+export interface Verdict {
+  session_summary: string;
+  final_score: number;
+  pros: string[];
+  cons: string[];
+  fact_checks: Array<{
+    claim: string;
+    verdict: 'Verified' | 'Misleading' | 'False' | 'Unverifiable';
+    source?: string;
+    context: string;
+  }>;
+  improvement_plan: string[];
+}

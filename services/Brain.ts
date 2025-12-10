@@ -4,8 +4,9 @@ import { BRAIN_SYS_PROMPT } from "../prompts/app_brain";
 import { getPhase1Prompt } from "../prompts/phases/phase1";
 import { getPhase2Prompt } from "../prompts/phases/phase2";
 import { getPhase3Prompt } from "../prompts/phases/phase3";
+import { getPhase4Prompt } from "../prompts/phases/phase4";
 import { JUROR_SYS_TEMPLATE } from "../prompts/jurorTemplate";
-import { Character } from "../types";
+import { Character, Verdict } from "../types";
 
 interface LogEntry {
   timestamp: string;
@@ -243,6 +244,66 @@ export class Brain {
       }
 
       return null;
+  }
+
+  /**
+   * Phase 4: Deliberation & Verdict
+   * Uses Google Search Grounding to verify claims and generate a final report.
+   */
+  public async initializePhase4(transcript: string): Promise<Verdict | null> {
+      console.log("[Brain] Phase 4: Deliberation started...");
+      this.addLog('system', "[PHASE 4] Starting Deliberation...");
+
+      const ai = new GoogleGenAI({ apiKey: this.apiKey });
+      
+      // Use standard generateContent instead of Chat to strictly separate context 
+      // and enable Search Tools without schema conflicts.
+      // Note: We cannot use responseSchema with googleSearch, so we parse manually.
+      try {
+          const response = await ai.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: getPhase4Prompt(transcript),
+              config: {
+                  tools: [{ googleSearch: {} }],
+                  // responseSchema is intentionally OMITTED to allow search usage
+              }
+          });
+
+          let rawText = response.text || "";
+          
+          // Log grounding metadata if available (for debugging)
+          if (response.candidates?.[0]?.groundingMetadata) {
+              console.log("[Brain] Grounding Metadata received:", response.candidates[0].groundingMetadata);
+          }
+          
+          // Parse JSON from Markdown Code Block
+          // Expecting ```json ... ``` or just { ... }
+          let jsonStr = rawText;
+          if (rawText.includes('```')) {
+              const match = rawText.match(/```(?:json)?([\s\S]*?)```/);
+              if (match && match[1]) {
+                  jsonStr = match[1];
+              }
+          }
+          
+          jsonStr = jsonStr.trim();
+          this.addLog('model', rawText);
+
+          try {
+              const verdict = JSON.parse(jsonStr) as Verdict;
+              console.log(`[Brain] Verdict Reached. Score: ${verdict.final_score}`);
+              return verdict;
+          } catch (parseError) {
+              console.error("[Brain] Failed to parse Verdict JSON", parseError);
+              console.log("Raw output:", rawText);
+              return null;
+          }
+
+      } catch (e: any) {
+          console.error("[Brain] Phase 4 Error", e);
+          this.addLog('system', `Phase 4 Error: ${e.message}`);
+          return null;
+      }
   }
 
   private fileToBase64(file: File): Promise<string> {

@@ -81,6 +81,7 @@ The audio system is designed for real-time interaction with specific sample rate
     *   **Note on Audio Transcription**: We do **not** need to perform separate client-side Speech-to-Text (STT) on the audio blob because the Live API streams accurate text transcripts in real-time. This reduces cost and complexity.
     *   *Consequence*: Users get both a listenable audio file AND a searchable text file of the interview.
 
+
 ### Code Reference (`hooks/useGeminiLive.ts`)
 
 ```typescript
@@ -209,3 +210,49 @@ There is a background "Brain" service that runs parallel to the transfer.
 *   **Function**: `brain.Phase3Transfer(...)`
 *   **Action**: Analyzes the transcript history to suggest the "Next Question" or "Memory Update".
 *   **Consequence**: Updates the *next* character's system prompt in the background (via `onUpdateJuror`), effectively "injecting" thoughts or strategy into the character for future turns.
+
+## 6. Network Resilience & Error Handling
+
+To ensure robust performance across unstable networks, the application implements a multi-layered resilience strategy.
+
+**IMPORTANT DISTINCTION:**
+*   **Session Resumption** is used ONLY for recovering from unintended network disconnections within the *same* juror session.
+*   **Transfer (Switching Jurors)** ALWAYS terminates the current session (clearing the resumption handle) and starts a completely NEW session for the next juror.
+
+### Mechanisms:
+
+*   **Exponential Backoff Reconnection (Intra-Session)**:
+    *   If the connection drops unexpectedly (and NOT due to a `transfer` call), the client attempts to reconnect automatically with increasing delays (e.g., 1s, 2s, 4s).
+*   **Session Resumption (Intra-Session)**:
+    *   The application listens for `sessionResumptionUpdate` events and stores the `newHandle`.
+    *   On reconnection (due to error), this handle is passed to the `connect` function via `sessionResumption: { handle: ... }`.
+    *   *Consequence*: The model "remembers" the conversation context even after a disconnect/reconnect cycle.
+    *   **Cleanup**: When `disconnect()` is called manually or via tool (Transfer/End), the handle is cleared to ensure the next session is fresh.
+*   **Optimized Audio Buffer (Latency)**:
+    *   The `ScriptProcessorNode` buffer size is set to `1024`.
+    *   *Consequence*: Reduces input latency, allowing for faster Voice Activity Detection and snappier interruptions.
+
+### Code Reference (`hooks/useGeminiLive.ts`)
+
+```typescript
+// Optimized Buffer Size
+const scriptProcessor = inputContext.createScriptProcessor(1024, 1, 1);
+
+// Session Resumption Logic
+const resumptionHandleRef = useRef<string | null>(null);
+
+// Inside onmessage:
+if (message.sessionResumptionUpdate?.newHandle) {
+    resumptionHandleRef.current = message.sessionResumptionUpdate.newHandle;
+}
+
+// Inside disconnect():
+resumptionHandleRef.current = null; // CRITICAL: Ensure next session is fresh
+
+// Inside connect config:
+config: {
+    // ...
+    // Use handle ONLY if available (resilience)
+    sessionResumption: resumptionHandleRef.current ? { handle: resumptionHandleRef.current } : undefined
+}
+```

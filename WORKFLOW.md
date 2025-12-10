@@ -1,4 +1,3 @@
-
 # Hot Seat Application Workflow
 
 This document outlines the architectural flow of the "Hot Seat" application, specifically focusing on the GenAI decision-making processes at each phase.
@@ -281,3 +280,50 @@ END LOOP
 2.  **Last Turn:** When `Sum(JurorTickets) == 1`, the final Juror enters "Final Turn Mode" (see above).
 3.  **End Panel:** Instead of transferring, this Juror invokes `endPanel()`.
 4.  **Verdict:** This triggers **Phase 4: Deliberation**, where the Brain aggregates all the grades and "Memory Summaries" to render a final Pass/Fail decision.
+
+---
+
+## Phase 4: Deliberation & Verdict
+
+**Goal:** Analyze the entire session, verify claims using external sources, and generate a comprehensive final report.
+
+**Trigger:** The final Juror calls the `endPanel()` tool.
+
+**Process Description:**
+1.  **Aggregations:** The system collects the full transcript of the session.
+2.  **Analysis:** The Brain (`services/Brain.ts`) receives the transcript. It is instructed to review the candidate's performance across all interactions.
+3.  **Fact Checking:** The Brain utilizes Google Search (Grounding) to verify specific technical claims, dates, or facts mentioned by the user during the interview.
+4.  **Report Generation:** The Brain produces a structured JSON report containing:
+    *   **Session Summary**: An executive recap.
+    *   **Pros & Cons**: Key strengths and weaknesses.
+    *   **Fact Check Results**: A verdict on specific claims (Verified/Misleading/False).
+    *   **Improvement Plan**: Actionable feedback.
+    *   **Final Score**: A quantitative grade (0-100).
+5.  **Display:** The application transitions to a "Verdict View" to present these findings to the user.
+
+**Algorithm (Pseudo-Code):**
+```pseudo
+// Ref: services/Brain.ts -> initializePhase4
+FUNCTION InitializePhase4(full_transcript):
+    // 1. Construct Deliberation Prompt (prompts/phases/phase4.ts)
+    prompt = `[PHASE 4: DELIBERATION]
+              Transcript: ${full_transcript}
+              
+              TASK:
+              1. Analyze the candidate's defense.
+              2. Fact Check claims using Google Search.
+              3. Generate a structured improvement plan.`
+
+    // 2. Request Analysis with Grounding
+    // Note: 'tools: [googleSearch]' enables the model to browse the web.
+    report = Brain.ChatSession.sendMessage(
+        prompt, 
+        schema=JSON,
+        tools=[googleSearch]
+    )
+
+    // 3. Return Structured Data
+    // Returns: { session_summary, pros, cons, fact_checks, improvement_plan, final_score }
+    RETURN report
+END FUNCTION
+```
