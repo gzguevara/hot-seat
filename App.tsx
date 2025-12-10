@@ -5,13 +5,14 @@ import { Character, SessionStatus, Verdict } from './types';
 import CharacterCard from './components/CharacterCard';
 import SetupWizard from './components/SetupWizard';
 import VerdictView from './components/VerdictView';
+import IntroView from './components/IntroView';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { brain } from './services/Brain';
 
-type AppState = 'setup' | 'interview' | 'analyzing' | 'verdict';
+type AppState = 'intro' | 'setup' | 'interview' | 'analyzing' | 'verdict';
 
 const App: React.FC = () => {
-  const [appState, setAppState] = useState<AppState>('setup');
+  const [appState, setAppState] = useState<AppState>('intro');
   const [contextDesc, setContextDesc] = useState('');
   const [contextFiles, setContextFiles] = useState<File[]>([]);
   
@@ -81,13 +82,11 @@ const App: React.FC = () => {
       }
   }, []);
 
-  const { status, volume, error, connect, disconnect } = useGeminiLive({
+  const { status, volume, error, connect, disconnect, isMuted, toggleMute } = useGeminiLive({
     userBio: contextDesc,
     onTransfer: async (targetChar, summary) => {
+       // Only update UI state. The hook handles the reconnection logic internally.
        await handleTransfer(targetChar, summary);
-       if (connectRef.current) {
-         await connectRef.current(targetChar, summary);
-       }
     },
     onUpdateJuror: handleUpdateJurorInstruction,
     onTicketDecrement: handleTicketDecrement,
@@ -124,16 +123,16 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex flex-col items-center justify-center p-6 sm:p-12 relative overflow-hidden print:overflow-visible print:h-auto print:bg-none print:bg-white print:block print:p-0">
+    <div className="h-screen w-screen bg-[#18191a] text-white flex flex-col overflow-hidden relative selection:bg-red-700 selection:text-white print:overflow-visible print:h-auto print:bg-white print:block">
       
-      {/* Background Decor */}
-      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none print:hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-900/20 rounded-full blur-[120px]" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-900/20 rounded-full blur-[120px]" />
-      </div>
+      {appState === 'intro' && (
+        <div className="flex-1 flex items-center justify-center overflow-auto">
+            <IntroView onStart={() => setAppState('setup')} />
+        </div>
+      )}
 
       {appState === 'setup' && (
-        <div className="relative z-10 w-full flex justify-center animate-fade-in print:hidden">
+        <div className="flex-1 flex items-center justify-center overflow-auto p-8">
            <SetupWizard 
              initialCharacters={CHARACTERS}
              onContextSubmitted={handleWizardContext}
@@ -143,18 +142,18 @@ const App: React.FC = () => {
       )}
 
       {appState === 'analyzing' && (
-        <div className="relative z-10 flex flex-col items-center animate-fade-in print:hidden">
+        <div className="flex-1 flex flex-col items-center justify-center animate-fade-in">
              <div className="w-24 h-24 mb-6 relative">
-                 <div className="absolute inset-0 rounded-full border-t-4 border-indigo-500 animate-spin"></div>
-                 <div className="absolute inset-2 rounded-full border-r-4 border-purple-500 animate-spin-reverse opacity-70"></div>
+                 <div className="absolute inset-0 rounded-full border-t-4 border-red-600 animate-spin"></div>
+                 <div className="absolute inset-2 rounded-full border-r-4 border-red-900 animate-spin-reverse opacity-70"></div>
              </div>
-             <h2 className="text-3xl font-bold text-white mb-2">The Council is Deliberating</h2>
-             <p className="text-gray-400">Verifying facts, calculating score, and generating your report...</p>
+             <h2 className="text-4xl font-black text-white mb-2 tracking-tighter uppercase">Compiling Results</h2>
+             <p className="text-red-400 font-mono text-sm">Reviewing transcript... Fact checking... Generating report...</p>
         </div>
       )}
 
       {appState === 'verdict' && verdict && (
-         <div className="absolute inset-0 z-50 overflow-y-auto bg-gray-900/95 backdrop-blur-xl animate-fade-in print:relative print:inset-auto print:bg-white print:overflow-visible print:z-auto print:h-auto">
+         <div className="absolute inset-0 z-50 overflow-y-auto bg-black/95 backdrop-blur-xl animate-fade-in print:relative print:inset-auto print:bg-white print:overflow-visible print:z-auto print:h-auto">
              <div className="min-h-full flex justify-center p-6 sm:p-12 print:p-0 print:block">
                 <VerdictView 
                    verdict={verdict} 
@@ -165,39 +164,29 @@ const App: React.FC = () => {
       )}
 
       {appState === 'interview' && (
-        <>
-          <div className="absolute top-6 right-6 z-20 print:hidden">
-             <button 
-                onClick={() => brain.downloadDebugLog()}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-500 bg-gray-900/50 border border-gray-700 rounded-lg hover:text-white hover:bg-gray-800 transition-colors backdrop-blur-sm"
-                title="Download Brain Debug Logs"
-             >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Brain Logs
-            </button>
-          </div>
-
-          <header className="relative z-10 text-center mb-8 animate-fade-in print:hidden">
-            <div className="inline-flex items-center justify-center px-4 py-1.5 mb-4 rounded-full bg-gray-800/50 border border-gray-700 text-indigo-400 text-xs font-bold tracking-wider uppercase">
-              Live Session
-            </div>
-            <h1 className="text-4xl sm:text-5xl font-extrabold text-white tracking-tight mb-2">
-              The <span className="text-indigo-500">Council</span>
-            </h1>
-            <p className="text-sm text-gray-400">
-                {status === 'CONNECTED' ? 'Microphone Active. Speak clearly.' : 'Establishing secure connection...'}
-            </p>
+        <div className="flex flex-col h-full">
+          {/* Minimal Header */}
+          <header className="h-14 flex items-center px-6 border-b border-[#3c4043] bg-[#202124] justify-between z-20">
+             <div className="flex items-center gap-3">
+                 <div className="bg-red-600 w-2 h-2 rounded-full animate-pulse"></div>
+                 <h1 className="text-sm font-medium tracking-wide text-gray-200 uppercase">Live Simulation <span className="text-gray-500 mx-2">|</span> {activeCharacter?.name || "Connecting..."}</h1>
+             </div>
+             <div className="text-xs font-mono text-gray-500">
+                {status === 'CONNECTED' ? '● REC' : 'CONNECTING...'}
+             </div>
           </header>
 
-          <main className="relative z-10 w-full max-w-6xl mb-12 animate-fade-in print:hidden">
-            {/* The Council Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Gallery View */}
+          <main className="flex-1 p-4 md:p-8 flex items-center justify-center bg-[#18191a]">
+            <div className={`grid w-full max-w-7xl gap-4 ${
+                characters.length <= 1 ? 'grid-cols-1 max-w-4xl' : 
+                characters.length <= 2 ? 'grid-cols-1 md:grid-cols-2' : 
+                'grid-cols-1 md:grid-cols-3'
+            }`}>
                 {characters.map((char) => {
                     const isActive = activeCharacter?.id === char.id;
                     return (
-                        <div key={char.id} className={`transition-all duration-500 ${isActive ? 'opacity-100 scale-105' : 'opacity-60 scale-95 grayscale-[0.5]'}`}>
+                        <div key={char.id} className="w-full h-full min-h-[250px] md:min-h-[350px]">
                             <CharacterCard 
                                 character={char} 
                                 isActive={isActive}
@@ -210,27 +199,43 @@ const App: React.FC = () => {
             </div>
           </main>
 
-          <footer className="relative z-10 animate-fade-in print:hidden">
-            {error && (
-                <div className="mb-4 px-4 py-2 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm text-center">
-                    {error}
+          {/* Call Controls Bar */}
+          <footer className="h-20 bg-[#202124] flex items-center justify-center gap-6 border-t border-[#3c4043] relative z-20">
+             {/* Mute Button */}
+             <button 
+                onClick={toggleMute}
+                className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors text-white group ${isMuted ? 'bg-red-600 hover:bg-red-700' : 'bg-[#3c4043] hover:bg-[#474a4d]'}`}
+             >
+                {isMuted ? (
+                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 3l18 18" />
+                    </svg>
+                ) : (
+                    <svg className="w-6 h-6 group-hover:scale-110 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                )}
+             </button>
+
+             {/* End Call Button */}
+             <button 
+                onClick={handleDisconnect}
+                className="w-16 h-12 rounded-full bg-red-600 hover:bg-red-700 flex items-center justify-center text-white shadow-lg transition-all hover:shadow-red-900/40 px-6 gap-2"
+             >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.517l2.257-1.128a1 1 0 00.502-1.21L9.228 3.683A1 1 0 008.279 3H5z" />
+                </svg>
+             </button>
+             
+             {error && (
+                <div className="absolute right-6 top-1/2 -translate-y-1/2 text-red-500 text-xs font-bold bg-red-900/20 px-3 py-1 rounded border border-red-900/50">
+                    ERROR: {error}
                 </div>
             )}
-            
-            <button 
-              onClick={handleDisconnect}
-              className="group relative inline-flex items-center justify-center px-8 py-3 text-base font-bold text-gray-300 transition-all duration-200 bg-gray-800 border border-gray-600 rounded-full hover:bg-red-900/20 hover:text-red-400 hover:border-red-500/50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 focus:ring-offset-gray-900"
-            >
-              <span className="w-2 h-2 rounded-full bg-red-500 mr-3 animate-pulse"></span>
-              Abort Session
-            </button>
           </footer>
-        </>
+        </div>
       )}
-      
-      <div className="fixed bottom-4 right-4 z-20 text-gray-700 text-xs pointer-events-none print:hidden">
-        Gemini Live API Demo
-      </div>
     </div>
   );
 };

@@ -51,6 +51,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   const [status, setStatus] = useState<SessionStatus>(SessionStatus.DISCONNECTED);
   const [volume, setVolume] = useState<AudioVolumeState>({ inputVolume: 0, outputVolume: 0 });
   const [error, setError] = useState<string | null>(null);
+  const [isMuted, setIsMuted] = useState(false);
 
   // Audio Contexts
   const inputContextRef = useRef<AudioContext | null>(null);
@@ -97,6 +98,19 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
     }
   }, []);
 
+  const toggleMute = useCallback(() => {
+    if (streamRef.current) {
+      const audioTracks = streamRef.current.getAudioTracks();
+      if (audioTracks.length > 0) {
+        const newEnabledState = !audioTracks[0].enabled;
+        audioTracks.forEach(track => {
+          track.enabled = newEnabledState;
+        });
+        setIsMuted(!newEnabledState);
+      }
+    }
+  }, []);
+
   const disconnect = useCallback(async () => {
     // 1. Export Recording before destroying context
     if (recorderRef.current && recorderRef.current.hasRecordedData()) {
@@ -131,6 +145,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
     sessionPromiseRef.current = null;
     setStatus(SessionStatus.DISCONNECTED);
     setVolume({ inputVolume: 0, outputVolume: 0 });
+    setIsMuted(false);
     
     // Reset transcript accumulation
     currentInputRef.current = "";
@@ -141,6 +156,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
     try {
       setStatus(SessionStatus.CONNECTING);
       setError(null);
+      setIsMuted(false);
       currentCharacterRef.current = character;
 
       // If no initial context is provided (fresh start), clear transcript buffer
@@ -520,5 +536,5 @@ LANGUAGE: English only.
     return () => { disconnect(); };
   }, [disconnect]);
 
-  return { status, volume, error, connect, disconnect };
+  return { status, volume, error, connect, disconnect, isMuted, toggleMute };
 };

@@ -1,5 +1,5 @@
 
-import React, { useState, ChangeEvent } from 'react';
+import React, { useState, useEffect, ChangeEvent } from 'react';
 import { Character } from '../types';
 import { brain } from '../services/Brain';
 
@@ -9,7 +9,17 @@ interface SetupWizardProps {
   initialCharacters: Character[];
 }
 
-const COLORS = ['bg-emerald-600', 'bg-indigo-600', 'bg-purple-700', 'bg-rose-600', 'bg-amber-600', 'bg-cyan-600'];
+// Updated Colors to be darker/redder
+const COLORS = ['bg-red-800', 'bg-red-700', 'bg-orange-800', 'bg-stone-800', 'bg-neutral-800', 'bg-rose-900'];
+
+const EXAMPLES = [
+  "Pitching a Series A to a skeptical VC regarding an AI-driven toaster...",
+  "Defending a PhD thesis on 'The Sociology of Memes' to a panel of boomers...",
+  "Convincing the CTO to rewrite the entire legacy codebase in Rust...",
+  "Explaining to the Board why the production database was deleted...",
+  "Asking for a 50% raise after missing all quarterly targets...",
+  "Justifying a 2-year delay on the 'MVP' launch..."
+];
 
 const SetupWizard: React.FC<SetupWizardProps> = ({ 
   onContextSubmitted, 
@@ -26,6 +36,45 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   
   // Interview Depth (Total Tickets)
   const [depth, setDepth] = useState<'short' | 'medium' | 'long'>('medium');
+
+  // Typewriter State
+  const [placeholder, setPlaceholder] = useState('');
+  const [exampleIndex, setExampleIndex] = useState(0);
+  const [charIndex, setCharIndex] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Typewriter Effect
+  useEffect(() => {
+    // If user has typed, stop animating and just clear
+    if (scenario.length > 0) return;
+
+    const currentFullText = EXAMPLES[exampleIndex];
+    let timer: ReturnType<typeof setTimeout>;
+
+    if (isDeleting) {
+        timer = setTimeout(() => {
+            if (charIndex > 0) {
+                setPlaceholder(currentFullText.substring(0, charIndex - 1));
+                setCharIndex(charIndex - 1);
+            } else {
+                setIsDeleting(false);
+                setExampleIndex((prev) => (prev + 1) % EXAMPLES.length);
+            }
+        }, 30); // Delete speed
+    } else {
+        timer = setTimeout(() => {
+            if (charIndex < currentFullText.length) {
+                setPlaceholder(currentFullText.substring(0, charIndex + 1));
+                setCharIndex(charIndex + 1);
+            } else {
+                // Pause at end before deleting
+                timer = setTimeout(() => setIsDeleting(true), 2000);
+            }
+        }, 50); // Type speed
+    }
+
+    return () => clearTimeout(timer);
+  }, [charIndex, isDeleting, exampleIndex, scenario]);
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -78,11 +127,12 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
         
         const newJuror: Character = {
             id: newId,
-            name: `Juror ${jurors.length + 1}`,
-            role: 'Expert Observer',
+            name: `Interrogator ${jurors.length + 1}`,
+            role: 'The Skeptic',
             description: 'Focused on asking clarifying questions.',
             voiceName: 'Puck',
-            avatarUrl: `https://picsum.photos/seed/${newId}/300/300`,
+            // Updated to use pravatar for consistent face avatars
+            avatarUrl: `https://i.pravatar.cc/300?u=${newId}`,
             color: randomColor,
             systemInstruction: 'You are a helpful interviewer.',
             tickets: 1
@@ -130,25 +180,25 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   // Loading Screen for Personas (Phase 1.5)
   if (isGenerating) {
     return (
-        <div className="w-full max-w-6xl bg-gray-800/50 backdrop-blur-md border border-gray-700 rounded-3xl p-12 shadow-2xl animate-fade-in flex flex-col items-center justify-center text-center">
+        <div className="w-full max-w-6xl bg-black border border-gray-800 rounded-3xl p-12 shadow-2xl animate-fade-in flex flex-col items-center justify-center text-center">
              <div className="w-20 h-20 mb-6 relative">
-                 <div className="absolute inset-0 rounded-full border-4 border-indigo-500/30"></div>
-                 <div className="absolute inset-0 rounded-full border-t-4 border-indigo-500 animate-spin"></div>
+                 <div className="absolute inset-0 rounded-full border-4 border-red-900/30"></div>
+                 <div className="absolute inset-0 rounded-full border-t-4 border-red-600 animate-spin"></div>
              </div>
-             <h2 className="text-2xl font-bold text-white mb-2">Analyzing your Scenario...</h2>
+             <h2 className="text-2xl font-bold text-white mb-2">Reviewing your notes...</h2>
              <p className="text-gray-400 max-w-md">
-                 Reading your documents and assembling the perfect panel of experts for your interview.
+                 Reading your documents and assembling a panel of experts to discuss your ideas.
              </p>
         </div>
     );
   }
 
   return (
-    <div className="w-full max-w-6xl bg-gray-800/50 backdrop-blur-md border border-gray-700 rounded-3xl p-8 shadow-2xl animate-fade-in relative overflow-hidden transition-all duration-500">
+    <div className="w-full max-w-6xl bg-black border border-gray-800 rounded-3xl p-8 shadow-2xl animate-fade-in relative overflow-hidden transition-all duration-500">
       {/* Progress Indicator */}
-      <div className="absolute top-0 left-0 w-full h-1 bg-gray-700">
+      <div className="absolute top-0 left-0 w-full h-1 bg-gray-900">
         <div 
-          className="h-full bg-indigo-500 transition-all duration-500 ease-out"
+          className="h-full bg-red-600 transition-all duration-500 ease-out shadow-[0_0_10px_rgba(220,38,38,0.8)]"
           style={{ width: step === 1 ? '33%' : step === 2 ? '66%' : '100%' }}
         />
       </div>
@@ -156,23 +206,29 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
       {step === 1 && (
         <div className="animate-fade-in">
           <header className="mb-8">
-            <h2 className="text-3xl font-bold text-white mb-2">Step 1: The Context</h2>
-            <p className="text-gray-400">Describe the scenario, job role, or technical problem. Upload relevant docs.</p>
+            <h2 className="text-3xl font-black text-white mb-2 uppercase tracking-tight">Step 1: The Context</h2>
+            <p className="text-gray-400">Describe the scenario. The more details you give, the better we can prepare.</p>
           </header>
 
           <div className="space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Scenario / Job Description</label>
+              <label className="block text-xs font-bold text-red-500 uppercase tracking-wider mb-2">Scenario / Job Description</label>
               <textarea
                 value={scenario}
                 onChange={(e) => setScenario(e.target.value)}
-                className="w-full h-40 bg-gray-900/80 border border-gray-600 rounded-xl p-4 text-white placeholder-gray-500 focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none transition-all"
-                placeholder="E.g. You are interviewing for a Senior Backend Role at a Fintech startup. The stack is Go, Kafka, and Kubernetes..."
+                className="w-full h-40 bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-white placeholder-gray-600 focus:ring-2 focus:ring-red-900 focus:border-red-600 resize-none transition-all font-mono text-sm"
+                placeholder={scenario.length > 0 ? "Describe your scenario..." : placeholder}
               />
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">Relevant Files (Resume, Architecture Diagrams)</label>
+              <label className="block text-xs font-bold text-red-500 uppercase tracking-wider mb-1">
+                Supporting Docs (PDF, TXT, IMAGES)
+              </label>
+              <p className="text-gray-500 text-xs mb-3 font-mono leading-relaxed">
+                  Upload your Pitch Deck, Resume, or Technical Diagrams. The Brain will analyze these to cross-reference your claims.
+              </p>
+              
               <div className="relative group">
                 <input
                   type="file"
@@ -180,19 +236,21 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                   onChange={handleFileChange}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
-                <div className="flex items-center justify-center w-full h-24 border-2 border-dashed border-gray-600 rounded-xl bg-gray-900/50 group-hover:border-indigo-500 group-hover:bg-gray-900/80 transition-all">
+                <div className="flex items-center justify-center w-full h-24 border-2 border-dashed border-gray-800 rounded-xl bg-gray-900/20 group-hover:border-red-600 group-hover:bg-red-900/10 transition-all">
                   <div className="text-center">
                     {files.length > 0 ? (
-                      <span className="text-indigo-400 font-medium">{files.length} file(s) selected</span>
+                      <span className="text-red-400 font-bold">{files.length} file(s) loaded</span>
                     ) : (
-                      <span className="text-gray-500 group-hover:text-gray-400">Drag & drop or click to upload</span>
+                      <span className="text-gray-600 group-hover:text-red-400 font-mono text-sm uppercase tracking-wider">
+                          Drop Files Here
+                      </span>
                     )}
                   </div>
                 </div>
               </div>
               {files.length > 0 && (
-                <ul className="mt-2 text-sm text-gray-400">
-                    {files.map((f, i) => <li key={i}>• {f.name}</li>)}
+                <ul className="mt-2 text-xs text-gray-500 font-mono">
+                    {files.map((f, i) => <li key={i}>[ATTACHMENT] {f.name}</li>)}
                 </ul>
               )}
             </div>
@@ -201,9 +259,9 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
               <button
                 onClick={handleNext}
                 disabled={!scenario && files.length === 0}
-                className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-indigo-500/25 flex items-center gap-2"
+                className="px-8 py-3 bg-red-700 hover:bg-red-600 disabled:bg-gray-900 disabled:text-gray-700 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-red-600/30 flex items-center gap-2 uppercase tracking-widest text-sm"
               >
-                Next: Configure Panel
+                Meet Your Interviewers
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
               </button>
             </div>
@@ -215,65 +273,76 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
         <div className="animate-fade-in">
           <header className="mb-6 flex flex-wrap gap-4 justify-between items-end">
             <div>
-                <h2 className="text-3xl font-bold text-white mb-2">Step 2: The Panel</h2>
-                <p className="text-gray-400">The Brain has proposed these experts based on your scenario. Customize if needed.</p>
+                <h2 className="text-3xl font-black text-white mb-2 uppercase tracking-tight">Step 2: The Jurors</h2>
+                <p className="text-gray-400"> You will need to convince this panel of experts!</p>
             </div>
             <div className="flex gap-3">
                 {/* Add Juror Button (Small, in Header) */}
                 {jurors.length < 5 && (
                     <button 
                         onClick={handleAddJuror}
-                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-indigo-600 border border-indigo-500 rounded-lg hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-500/20"
+                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold text-white bg-red-900/50 border border-red-800 rounded-lg hover:bg-red-800 transition-colors uppercase tracking-wider"
                     >
                         <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                         </svg>
-                        Add Juror
+                        Add Interviewer
                     </button>
                 )}
-                
-                <button 
-                    onClick={() => brain.downloadDebugLog()}
-                    className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-400 bg-gray-800 border border-gray-600 rounded-lg hover:text-white hover:bg-gray-700 transition-colors"
-                    title="Download Brain Debug Logs"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Debug Brain
-                </button>
             </div>
           </header>
 
-          <div className="mb-6 flex items-center gap-4 bg-gray-900/40 p-4 rounded-xl border border-gray-700">
-             <span className="text-sm font-bold text-gray-300 uppercase tracking-wider">Interview Depth:</span>
-             <div className="flex gap-2">
-                {(['short', 'medium', 'long'] as const).map((d) => (
+          <div className="mb-8">
+             <div className="flex items-baseline justify-between mb-3">
+                 <label className="text-xs font-bold text-red-500 uppercase tracking-widest">
+                    Question per Juror
+                 </label>
+                 <span className="text-xs text-gray-500 font-mono">
+                    Determines how many follow-up questions each juror will ask.
+                 </span>
+             </div>
+             
+             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                    { id: 'short', label: 'Quick Chat', desc: 'One question. Good for a vibe check.' },
+                    { id: 'medium', label: 'Standard', desc: 'Two questions. A balanced discussion.' },
+                    { id: 'long', label: 'Grilling', desc: 'Three questions. They will dig deep.' }
+                ].map((opt) => (
                     <button
-                        key={d}
-                        onClick={() => setDepth(d)}
-                        className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                            depth === d 
-                            ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' 
-                            : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                        } capitalize`}
+                        key={opt.id}
+                        onClick={() => setDepth(opt.id as any)}
+                        className={`relative p-4 rounded-xl border text-left transition-all duration-200 group ${
+                            depth === opt.id 
+                            ? 'bg-red-950/30 border-red-500 shadow-lg shadow-red-900/20' 
+                            : 'bg-gray-900/20 border-gray-800 hover:border-gray-600 hover:bg-gray-900/40'
+                        }`}
                     >
-                        {d} ({d === 'short' ? '1 Q/Juror' : d === 'medium' ? '~2 Q/Juror' : '~3 Q/Juror'})
+                        <div className="flex justify-between items-start mb-1">
+                            <span className={`text-sm font-black uppercase tracking-wider ${depth === opt.id ? 'text-white' : 'text-gray-400 group-hover:text-gray-200'}`}>
+                                {opt.label}
+                            </span>
+                            {depth === opt.id && (
+                                <span className="flex h-2 w-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>
+                            )}
+                        </div>
+                        <p className={`text-xs font-mono leading-relaxed ${depth === opt.id ? 'text-red-200/70' : 'text-gray-600'}`}>
+                            {opt.desc}
+                        </p>
                     </button>
                 ))}
              </div>
           </div>
 
-          {/* Horizontal Scrollable List */}
-          <div className="flex gap-6 overflow-x-auto pb-8 mb-4 snap-x custom-scrollbar px-1">
+          {/* Responsive Grid List */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
             {jurors.map((juror, idx) => (
-              <div key={juror.id} className="min-w-[350px] w-[350px] relative group bg-gray-900/60 rounded-2xl p-4 border border-gray-700 flex flex-col gap-3 transition-all hover:border-gray-500 snap-center">
+              <div key={juror.id} className="relative group bg-black rounded-2xl p-4 border border-gray-800 flex flex-col gap-3 transition-all hover:border-red-900">
                 
                 {/* Remove Button (Only if > 1 juror) */}
                 {jurors.length > 1 && (
                     <button 
                         onClick={() => handleRemoveJuror(idx)}
-                        className="absolute top-2 right-2 text-gray-600 hover:text-red-400 transition-colors p-1"
+                        className="absolute top-2 right-2 text-gray-700 hover:text-red-500 transition-colors p-1"
                         title="Remove Juror"
                     >
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -283,61 +352,56 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                 )}
 
                 <div className="flex items-center gap-3 mb-2">
-                    <div className={`w-12 h-12 rounded-full ${juror.color} p-0.5 flex-shrink-0`}>
-                        <img src={juror.avatarUrl} alt="" className="w-full h-full rounded-full object-cover" />
+                    <div className={`w-12 h-12 rounded-full ${juror.color} flex items-center justify-center flex-shrink-0 border border-gray-700`}>
+                        <svg className="w-6 h-6 text-white/40" viewBox="0 0 24 24" fill="currentColor">
+                           <path fillRule="evenodd" d="M7.5 6a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM3.751 20.105a8.25 8.25 0 0116.498 0 .75.75 0 01-.437.695A18.683 18.683 0 0112 22.5c-2.786 0-5.433-.608-7.812-1.7a.75.75 0 01-.437-.695z" clipRule="evenodd" />
+                        </svg>
                     </div>
                     <div className="flex-grow pr-6">
-                         <label className="text-xs text-gray-500 uppercase font-bold tracking-wider">Name</label>
+                         <label className="text-[10px] text-red-500 uppercase font-bold tracking-widest">Name</label>
                          <input 
                             value={juror.name}
                             onChange={(e) => handleJurorChange(idx, 'name', e.target.value)}
-                            className="w-full bg-transparent border-b border-gray-600 text-white font-bold focus:border-indigo-500 focus:outline-none py-1"
+                            className="w-full bg-transparent border-b border-gray-800 text-white font-black text-lg focus:border-red-600 focus:outline-none py-1"
                          />
                     </div>
                 </div>
                 
-                <div className="flex gap-2">
-                    <div className="flex-1">
-                        <label className="text-xs text-gray-500 uppercase font-bold tracking-wider">Role</label>
-                        <input 
-                            value={juror.role}
-                            onChange={(e) => handleJurorChange(idx, 'role', e.target.value)}
-                            className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none"
-                        />
-                    </div>
-                    <div className="w-1/3 flex flex-col justify-end">
-                         <div className="px-2 py-1.5 text-xs text-indigo-300 bg-indigo-900/30 rounded border border-indigo-500/30 text-center font-medium">
-                            {juror.voiceName}
-                         </div>
-                    </div>
+                <div className="w-full">
+                    <label className="text-[10px] text-red-500 uppercase font-bold tracking-widest">Role</label>
+                    <input 
+                        value={juror.role}
+                        onChange={(e) => handleJurorChange(idx, 'role', e.target.value)}
+                        className="w-full bg-gray-900 border border-gray-800 rounded px-2 py-1.5 text-xs text-gray-300 focus:border-red-600 focus:outline-none font-bold"
+                    />
                 </div>
 
                 <div>
-                     <label className="text-xs text-gray-500 uppercase font-bold tracking-wider">Description</label>
+                     <label className="text-[10px] text-red-500 uppercase font-bold tracking-widest">Strategy</label>
                      <textarea 
                         value={juror.description}
                         onChange={(e) => handleJurorChange(idx, 'description', e.target.value)}
                         rows={3}
-                        className="w-full bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-400 focus:border-indigo-500 focus:outline-none resize-none"
+                        className="w-full bg-gray-900 border border-gray-800 rounded px-2 py-1.5 text-xs text-gray-500 focus:border-red-600 focus:outline-none resize-none font-mono"
                      />
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="flex justify-between items-center pt-4 border-t border-gray-700">
+          <div className="flex justify-between items-center pt-4 border-t border-gray-800">
             <button
               onClick={() => setStep(1)}
-              className="text-gray-400 hover:text-white font-medium px-4 py-2 transition-colors"
+              className="text-gray-500 hover:text-white font-bold px-4 py-2 transition-colors uppercase text-sm"
             >
               Back
             </button>
             <button
               onClick={handleConfigureHotSeat}
-              className="px-8 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition-all shadow-lg hover:shadow-emerald-500/25 flex items-center gap-2 group"
+              className="px-8 py-3 bg-red-700 hover:bg-red-600 text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg hover:shadow-red-600/25 flex items-center gap-2 group"
             >
-              <svg className="w-5 h-5 group-hover:animate-spin-slow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-              Configure Hot Seat
+              <svg className="w-5 h-5 group-hover:animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+              Start Simulation
             </button>
           </div>
         </div>
@@ -346,18 +410,19 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
       {step === 3 && (
         <div className="animate-fade-in py-12 flex flex-col items-center justify-center text-center">
              <div className="w-24 h-24 mb-6 relative">
-                 <div className="absolute inset-0 rounded-full border-t-4 border-indigo-500 animate-spin"></div>
-                 <div className="absolute inset-2 rounded-full border-r-4 border-purple-500 animate-spin-reverse opacity-70"></div>
+                 <div className="absolute inset-0 rounded-full border-t-4 border-red-600 animate-spin"></div>
+                 <div className="absolute inset-2 rounded-full border-r-4 border-red-900 animate-spin-reverse opacity-70"></div>
                  <div className="absolute inset-0 flex items-center justify-center">
-                     <svg className="w-8 h-8 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                     <svg className="w-8 h-8 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
                      </svg>
                  </div>
              </div>
-             <h2 className="text-3xl font-bold text-white mb-2">The Brain is Thinking...</h2>
-             <p className="text-gray-400 max-w-lg mx-auto leading-relaxed">
-                 Analyzing your documents, verifying claims, and briefing the panel. 
-                 <br/><span className="text-indigo-400 text-sm mt-2 block">Constructing personalized system prompts for {jurors.length} experts.</span>
+             <h2 className="text-3xl font-black text-white mb-2 uppercase tracking-tighter">Preparing Simulation...</h2>
+             <p className="text-gray-500 max-w-lg mx-auto leading-relaxed font-mono text-sm">
+                 Briefing the interviewers. <br/>
+                 Loading context. <br/>
+                 <span className="text-red-500 block mt-2">Get ready.</span>
              </p>
         </div>
       )}
