@@ -141,7 +141,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                         turns: [{
                             role: "user",
                             parts: [{
-                                text: "The user has been silent for a while. Please briefly ask if they are still there and wait for their response."
+                                text: "The user has been silent for a while. Ask if they are still there."
                             }]
                         }],
                         turnComplete: true
@@ -152,7 +152,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                 
                 hasAskedPresenceRef.current = true;
             }
-        }, 5000); // 3 seconds timeout
+        }, 5000); // 5 seconds timeout
     }
   }, []);
 
