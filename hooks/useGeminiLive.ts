@@ -78,9 +78,25 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   const currentInputRef = useRef<string>("");
   const currentOutputRef = useRef<string>("");
 
+  // Inactivity Tracking
+  const statusRef = useRef<SessionStatus>(SessionStatus.DISCONNECTED);
+  const presenceCheckTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasAskedPresenceRef = useRef<boolean>(false);
+  const lastUserActivityRef = useRef<number>(Date.now());
+  const lastTimerResetTimeRef = useRef<number>(0);
+  const isAiSpeakingRef = useRef<boolean>(false);
+
   useEffect(() => {
     charactersRef.current = characters;
   }, [characters]);
+
+  // Sync status to ref for callbacks
+  useEffect(() => {
+    statusRef.current = status;
+    if (status !== SessionStatus.CONNECTED) {
+        if (presenceCheckTimeoutRef.current) clearTimeout(presenceCheckTimeoutRef.current);
+    }
+  }, [status]);
 
   // Sends a text turn to wake up the model immediately (Zero-Latency Trigger)
   const sendInitialTrigger = useCallback(async (session: any) => {
@@ -98,6 +114,57 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
     }
   }, []);
 
+  // Inactivity Logic
+  const resetInactivityTimer = useCallback(() => {
+    // 1. Clear any existing timer immediately
+    if (presenceCheckTimeoutRef.current) {
+        clearTimeout(presenceCheckTimeoutRef.current);
+        presenceCheckTimeoutRef.current = null;
+    }
+    
+    // 2. Reset activity flags
+    hasAskedPresenceRef.current = false;
+    lastUserActivityRef.current = Date.now();
+
+    // 3. Start new timer ONLY if AI is NOT speaking
+    if (statusRef.current === SessionStatus.CONNECTED && currentSessionRef.current) {
+        
+        // If AI is speaking, silence has not started yet.
+        if (isAiSpeakingRef.current) return;
+
+        presenceCheckTimeoutRef.current = setTimeout(() => {
+            // Double check inside timeout to prevent race conditions
+            if (statusRef.current === SessionStatus.CONNECTED && currentSessionRef.current && !hasAskedPresenceRef.current && !isAiSpeakingRef.current) {
+                console.log("[Inactivity] Silence detected (3s). Sending nudge.");
+                try {
+                    currentSessionRef.current.sendClientContent({
+                        turns: [{
+                            role: "user",
+                            parts: [{
+                                text: "The user has been silent for a while. Please briefly ask if they are still there and wait for their response."
+                            }]
+                        }],
+                        turnComplete: true
+                    });
+                } catch (e) {
+                    console.error("Failed to send inactivity prompt", e);
+                }
+                
+                hasAskedPresenceRef.current = true;
+            }
+        }, 5000); // 3 seconds timeout
+    }
+  }, []);
+
+  const throttleResetTimer = useCallback(() => {
+      const now = Date.now();
+      // Throttle resetting the timer to avoid excessive calls during continuous speech
+      if (now - lastTimerResetTimeRef.current > 500) { 
+          resetInactivityTimer();
+          lastTimerResetTimeRef.current = now;
+      }
+  }, [resetInactivityTimer]);
+
   const toggleMute = useCallback(() => {
     if (streamRef.current) {
       const audioTracks = streamRef.current.getAudioTracks();
@@ -107,9 +174,12 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
           track.enabled = newEnabledState;
         });
         setIsMuted(!newEnabledState);
+        if (newEnabledState) {
+            resetInactivityTimer(); // User unmuted, treat as activity
+        }
       }
     }
-  }, []);
+  }, [resetInactivityTimer]);
 
   const disconnect = useCallback(async () => {
     // 1. Export Recording before destroying context
@@ -146,10 +216,17 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
     setStatus(SessionStatus.DISCONNECTED);
     setVolume({ inputVolume: 0, outputVolume: 0 });
     setIsMuted(false);
+    isAiSpeakingRef.current = false;
     
     // Reset transcript accumulation
     currentInputRef.current = "";
     currentOutputRef.current = "";
+
+    // Clear Inactivity Timer
+    if (presenceCheckTimeoutRef.current) {
+        clearTimeout(presenceCheckTimeoutRef.current);
+        presenceCheckTimeoutRef.current = null;
+    }
   }, []);
 
   const connect = useCallback(async (character: Character, initialContext?: string, toolsOverride?: any[]) => {
@@ -166,8 +243,22 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       
       // Initialize Recorder
       recorderRef.current = new CustomMediaRecorder();
-      // Initialize Player
-      audioPlayerRef.current = new AudioStreamPlayer(24000);
+      
+      // Initialize Player with Playback State Callback
+      audioPlayerRef.current = new AudioStreamPlayer(24000, (isPlaying) => {
+          isAiSpeakingRef.current = isPlaying;
+          if (isPlaying) {
+              // AI Started speaking: Kill the inactivity timer
+              if (presenceCheckTimeoutRef.current) {
+                  clearTimeout(presenceCheckTimeoutRef.current);
+                  presenceCheckTimeoutRef.current = null;
+              }
+          } else {
+              // AI Stopped speaking: Start the inactivity timer (silence begins now)
+              // We call resetInactivityTimer which sets the timeout
+              resetInactivityTimer();
+          }
+      });
 
       // --- 1. Audio Setup ---
       // CRITICAL: We explicitly disable browser audio processing to ensure raw input.
@@ -207,6 +298,11 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
         }
         const rms = Math.sqrt(sum / inputData.length);
         setVolume(prev => ({ ...prev, inputVolume: Math.min(1, rms * 5) })); 
+
+        // Inactivity Check: If user is speaking (approx threshold 0.02)
+        if (rms > 0.02) {
+            throttleResetTimer();
+        }
 
         // Send audio to Gemini continuously
         if (sessionPromiseRef.current) {
@@ -321,6 +417,7 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
           onopen: () => {
             console.log('Gemini Live Session Opened');
             setStatus(SessionStatus.CONNECTED);
+            resetInactivityTimer(); // Start the timer loop
           },
           onmessage: async (message: LiveServerMessage) => {
             const serverContent = message.serverContent;
@@ -330,7 +427,13 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                 currentOutputRef.current += serverContent.outputTranscription.text;
             }
             if (serverContent?.inputTranscription?.text) {
-                currentInputRef.current += serverContent.inputTranscription.text;
+                const text = serverContent.inputTranscription.text;
+                currentInputRef.current += text;
+                
+                // If we get text, it's definitely activity
+                if (text.trim().length > 0) {
+                    throttleResetTimer();
+                }
             }
 
             if (serverContent?.turnComplete) {
@@ -530,7 +633,7 @@ LANGUAGE: English only.
       setStatus(SessionStatus.ERROR);
       disconnect();
     }
-  }, [disconnect, onTransfer, onUpdateJuror, onTicketDecrement, userBio, sendInitialTrigger, onComplete]); 
+  }, [disconnect, onTransfer, onUpdateJuror, onTicketDecrement, userBio, sendInitialTrigger, onComplete, resetInactivityTimer, throttleResetTimer]); 
 
   useEffect(() => {
     return () => { disconnect(); };

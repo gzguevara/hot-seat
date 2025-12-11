@@ -7,10 +7,19 @@ export class AudioStreamPlayer {
   private scheduledSources: Set<AudioBufferSourceNode> = new Set();
   private sampleRate: number;
   private isStopped: boolean = false;
+  private onPlaybackStateChange?: (isPlaying: boolean) => void;
 
-  constructor(sampleRate: number = 24000) {
+  constructor(sampleRate: number = 24000, onPlaybackStateChange?: (isPlaying: boolean) => void) {
     this.sampleRate = sampleRate;
     this.context = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate });
+    this.onPlaybackStateChange = onPlaybackStateChange;
+  }
+
+  private updatePlaybackState() {
+      const isPlaying = this.scheduledSources.size > 0;
+      if (this.onPlaybackStateChange) {
+          this.onPlaybackStateChange(isPlaying);
+      }
   }
 
   public async play(base64Data: string, onVolume?: (vol: number) => void) {
@@ -64,8 +73,11 @@ export class AudioStreamPlayer {
     this.nextStartTime += buffer.duration;
 
     this.scheduledSources.add(source);
+    this.updatePlaybackState(); // State becomes TRUE (or stays true)
+
     source.onended = () => {
         this.scheduledSources.delete(source);
+        this.updatePlaybackState(); // Check if this was the last source (State might become FALSE)
     };
   }
 
@@ -75,10 +87,9 @@ export class AudioStreamPlayer {
         try { source.stop(); } catch (e) { /* ignore */ }
     });
     this.scheduledSources.clear();
-    // Reset cursor to 0? No, resetting to 0 causes issues if we resume.
-    // We should reset to "now" on next play, which the gap handling logic does automatically.
-    // But setting it to 0 effectively forces a gap check on next play.
+    // Reset cursor
     this.nextStartTime = 0; 
+    this.updatePlaybackState(); // State becomes FALSE
   }
 
   public close() {
