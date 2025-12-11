@@ -19,29 +19,38 @@ interface UseGeminiLiveProps {
   onComplete?: (transcript: string) => void;
 }
 
+// Global Tool Definition for Consistency
+const END_PANEL_TOOL: FunctionDeclaration = {
+    name: 'endPanel',
+    description: 'Concludes the entire interview session. Call this ONLY when you are the LAST remaining juror and you have finished your questions.',
+    parameters: {
+        type: Type.OBJECT,
+        properties: {} 
+    }
+};
+
 // Helper to strip transfer logic and inject endPanel logic
 const convertToFinalJurorPrompt = (basePrompt: string) => {
     // Matches from "**TRANSITION RULES" until "# 1. CONTEXT"
-    // This replaces the instruction to use 'transfer' with instructions to use 'endPanel'
     const transitionSectionRegex = /\*\*TRANSITION RULES \(CRITICAL\):\*\*[\s\S]*?(?=# 1\. CONTEXT)/;
-    
+    const protocolSectionRegex = /# PROTOCOL[\s\S]*?(?=# DYNAMIC CONFIGS)/;
+
     const finalInstructions = `
-**SESSION CONCLUSION RULES (CRITICAL):**
-You are the FINAL juror. The user has passed the previous interviews.
-Your Goal: Ask your specific assigned question. Dig deep.
-**STYLE:** Be extremely concise. Do not waffle.
-**LANGUAGE:** ALWAYS speak English.
-Ending: When you are satisfied with the answer (or if the user fails to answer), you MUST call the \`endPanel\` tool.
+# PROTOCOL (FINAL TURN)
+- You are the FINAL juror. The user has passed the previous interviews.
+- **TASK:** Ask your specific question. Dig deep.
+- **LANGUAGE:** **ALWAYS SPEAK ENGLISH.**
+- **CONCLUSION:** When you are satisfied with the answer (or if the user fails to answer), you **MUST** call the \`endPanel\` tool.
 - DO NOT pass to a colleague.
 - DO NOT say "I will transfer you".
 - Say "Thank you, that concludes our session." and call \`endPanel\`.
 
-**Tool Usage:**
-Call \`endPanel({ reason: "interview_complete" })\` to finish.
+# Tool Usage
+Call \`endPanel()\` to finish.
 `;
 
-    if (transitionSectionRegex.test(basePrompt)) {
-        return basePrompt.replace(transitionSectionRegex, finalInstructions);
+    if (protocolSectionRegex.test(basePrompt)) {
+        return basePrompt.replace(protocolSectionRegex, finalInstructions);
     } else {
         return basePrompt + "\n\n" + finalInstructions;
     }
@@ -99,13 +108,13 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
   }, [status]);
 
   // Sends a text turn to wake up the model immediately (Zero-Latency Trigger)
-  const sendInitialTrigger = useCallback(async (session: any) => {
+  const sendInitialTrigger = useCallback(async (session: any, prompt: string) => {
     try {
-        console.log("Sending text trigger to wake model...");
+        console.log("Sending text trigger to wake model...", prompt);
         await session.sendClientContent({
             turns: [{ 
                 role: "user", 
-                parts: [{ text: "Hello, I am here. Please introduce yourself and start the interview. Remember to be concise and speak English." }] 
+                parts: [{ text: prompt }] 
             }],
             turnComplete: true
         });
@@ -116,26 +125,20 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
 
   // Inactivity Logic
   const resetInactivityTimer = useCallback(() => {
-    // 1. Clear any existing timer immediately
     if (presenceCheckTimeoutRef.current) {
         clearTimeout(presenceCheckTimeoutRef.current);
         presenceCheckTimeoutRef.current = null;
     }
     
-    // 2. Reset activity flags
     hasAskedPresenceRef.current = false;
     lastUserActivityRef.current = Date.now();
 
-    // 3. Start new timer ONLY if AI is NOT speaking
     if (statusRef.current === SessionStatus.CONNECTED && currentSessionRef.current) {
-        
-        // If AI is speaking, silence has not started yet.
         if (isAiSpeakingRef.current) return;
 
         presenceCheckTimeoutRef.current = setTimeout(() => {
-            // Double check inside timeout to prevent race conditions
             if (statusRef.current === SessionStatus.CONNECTED && currentSessionRef.current && !hasAskedPresenceRef.current && !isAiSpeakingRef.current) {
-                console.log("[Inactivity] Silence detected (3s). Sending nudge.");
+                console.log("[Inactivity] Silence detected (6s). Sending nudge.");
                 try {
                     currentSessionRef.current.sendClientContent({
                         turns: [{
@@ -149,16 +152,14 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                 } catch (e) {
                     console.error("Failed to send inactivity prompt", e);
                 }
-                
                 hasAskedPresenceRef.current = true;
             }
-        }, 5000); // 5 seconds timeout
+        }, 6000); 
     }
   }, []);
 
   const throttleResetTimer = useCallback(() => {
       const now = Date.now();
-      // Throttle resetting the timer to avoid excessive calls during continuous speech
       if (now - lastTimerResetTimeRef.current > 500) { 
           resetInactivityTimer();
           lastTimerResetTimeRef.current = now;
@@ -175,20 +176,18 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
         });
         setIsMuted(!newEnabledState);
         if (newEnabledState) {
-            resetInactivityTimer(); // User unmuted, treat as activity
+            resetInactivityTimer(); 
         }
       }
     }
   }, [resetInactivityTimer]);
 
   const disconnect = useCallback(async () => {
-    // 1. Export Recording before destroying context
     if (recorderRef.current && recorderRef.current.hasRecordedData()) {
         const blob = recorderRef.current.getCombinedAudioBlob();
         console.log(`[System] Session ended. Recording ready. Size: ${blob.size} bytes`);
         await saveTranscript(blob);
     }
-    // Reset recorder
     recorderRef.current = null;
 
     if (inputContextRef.current) {
@@ -196,7 +195,6 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       inputContextRef.current = null;
     }
     
-    // Stop Player
     if (audioPlayerRef.current) {
         audioPlayerRef.current.close();
         audioPlayerRef.current = null;
@@ -217,12 +215,9 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
     setVolume({ inputVolume: 0, outputVolume: 0 });
     setIsMuted(false);
     isAiSpeakingRef.current = false;
-    
-    // Reset transcript accumulation
     currentInputRef.current = "";
     currentOutputRef.current = "";
 
-    // Clear Inactivity Timer
     if (presenceCheckTimeoutRef.current) {
         clearTimeout(presenceCheckTimeoutRef.current);
         presenceCheckTimeoutRef.current = null;
@@ -236,39 +231,30 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       setIsMuted(false);
       currentCharacterRef.current = character;
 
-      // If no initial context is provided (fresh start), clear transcript buffer
       if (!initialContext) {
           transcriptBufferRef.current = [];
       }
       
-      // Initialize Recorder
       recorderRef.current = new CustomMediaRecorder();
-      
-      // Initialize Player with Playback State Callback
       audioPlayerRef.current = new AudioStreamPlayer(24000, (isPlaying) => {
           isAiSpeakingRef.current = isPlaying;
           if (isPlaying) {
-              // AI Started speaking: Kill the inactivity timer
               if (presenceCheckTimeoutRef.current) {
                   clearTimeout(presenceCheckTimeoutRef.current);
                   presenceCheckTimeoutRef.current = null;
               }
           } else {
-              // AI Stopped speaking: Start the inactivity timer (silence begins now)
-              // We call resetInactivityTimer which sets the timeout
               resetInactivityTimer();
           }
       });
 
-      // --- 1. Audio Setup ---
-      // CRITICAL: We explicitly disable browser audio processing to ensure raw input.
       const stream = await navigator.mediaDevices.getUserMedia({ 
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
             channelCount: 1,
-            // @ts-ignore - latency is not in standard type but supported in some browsers
+            // @ts-ignore
             latency: 0
           } 
       });
@@ -280,14 +266,12 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       const source = inputContext.createMediaStreamSource(stream);
       inputSourceRef.current = source;
       
-      // Reduced buffer size to 1024 for lower latency (approx 64ms)
       const scriptProcessor = inputContext.createScriptProcessor(1024, 1, 1);
       processorRef.current = scriptProcessor;
 
       scriptProcessor.onaudioprocess = (e) => {
         const inputData = e.inputBuffer.getChannelData(0);
         
-        // Feed User Audio to Recorder
         if (recorderRef.current) {
             recorderRef.current.addUserAudio(inputData);
         }
@@ -299,12 +283,10 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
         const rms = Math.sqrt(sum / inputData.length);
         setVolume(prev => ({ ...prev, inputVolume: Math.min(1, rms * 5) })); 
 
-        // Inactivity Check: If user is speaking (approx threshold 0.02)
         if (rms > 0.02) {
             throttleResetTimer();
         }
 
-        // Send audio to Gemini continuously
         if (sessionPromiseRef.current) {
             const blob = pcmToGeminiBlob(inputData, 16000);
             sessionPromiseRef.current.then(session => {
@@ -322,7 +304,15 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
       
       const transferTool: FunctionDeclaration = {
         name: 'transfer',
-        description: `Pass the conversation to a colleague. Use this for ANY handover (polite or interruption).`,
+        description: `
+1. "requested_by_current_juror" (Polite Handoff)
+   - *Scenario:* E.g. the user answered your question.
+   - *Behavior:* Say something like, "Alright, thank you for your answer. I would like to hand over to {{COLLEAGUE_NAME}} now." THEN call the tool.
+   
+2. "requested_by_user" (User Direction)
+   - *Scenario:* The user explicitly asks to speak to someone else (e.g., "I want to explain the security to Kore").
+   - *Behavior:* Acknowledge it briefly ("Sure, Kore is right here.") THEN call the tool immediately.
+`,
         parameters: {
           type: Type.OBJECT,
           properties: {
@@ -338,57 +328,41 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
             },
             conversation_context: {
               type: Type.STRING,
-              description: "A brief summary of the immediate discussion and specific instructions for the next juror on WHY they are taking over."
+              description: "A brief summary of the immediate discussion."
             }
           },
           required: ['colleague', 'reason', 'conversation_context']
         }
       };
 
-      const endPanelTool: FunctionDeclaration = {
-          name: 'endPanel',
-          description: 'Concludes the entire interview session. Call this ONLY when you are the LAST remaining juror and you have finished your questions.',
-          parameters: {
-              type: Type.OBJECT,
-              properties: {
-                  reason: {
-                      type: Type.STRING,
-                      description: "Reason for ending the session.",
-                      enum: ["interview_complete", "candidate_failure", "time_limit"]
-                  }
-              },
-              required: ['reason']
-          }
-      };
-
-      // Determine which tools to use. 
       let activeTools = toolsOverride;
       let systemInstruction = character.systemInstruction;
 
       if (!activeTools) {
           if (validColleagues.length === 0) {
               console.log("[System] No colleagues available (Final Turn / Single Juror). Enforcing EndPanel.");
-              activeTools = [{ functionDeclarations: [endPanelTool] }];
-              // Force replace the instruction
+              activeTools = [{ functionDeclarations: [END_PANEL_TOOL] }];
+              const originalInstruction = systemInstruction;
               systemInstruction = convertToFinalJurorPrompt(systemInstruction);
+              if (systemInstruction !== originalInstruction) {
+                  onUpdateJuror(character.id, systemInstruction);
+              }
           } else {
               activeTools = [{ functionDeclarations: [transferTool] }];
           }
       }
 
-      // --- 3. Gemini Connection ---
       const ai = new GoogleGenAI({ 
           apiKey: process.env.API_KEY, 
           httpOptions: { apiVersion: 'v1alpha' }
       });
       
-      // Inject Initial Context if provided
       if (userBio && userBio.trim()) {
         systemInstruction += `\n\n[CANDIDATE INFO]: "${userBio}".`;
       }
 
       if (initialContext) {
-        // Brain logic already updated instruction via onUpdateJuror / transfer logic
+        // Context already handled by Brain
       } else {
         systemInstruction += `\n\n[SYSTEM NOTICE]: When the user says Hello, introduce yourself and start the interview.`;
       }
@@ -417,23 +391,18 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
           onopen: () => {
             console.log('Gemini Live Session Opened');
             setStatus(SessionStatus.CONNECTED);
-            resetInactivityTimer(); // Start the timer loop
+            resetInactivityTimer();
           },
           onmessage: async (message: LiveServerMessage) => {
             const serverContent = message.serverContent;
             
-            // --- Transcript Tracking ---
             if (serverContent?.outputTranscription?.text) {
                 currentOutputRef.current += serverContent.outputTranscription.text;
             }
             if (serverContent?.inputTranscription?.text) {
                 const text = serverContent.inputTranscription.text;
                 currentInputRef.current += text;
-                
-                // If we get text, it's definitely activity
-                if (text.trim().length > 0) {
-                    throttleResetTimer();
-                }
+                if (text.trim().length > 0) throttleResetTimer();
             }
 
             if (serverContent?.turnComplete) {
@@ -447,23 +416,17 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                 }
             }
 
-            // --- Tool Calling (Handoff or End) ---
             if (message.toolCall) {
               const transferCall = message.toolCall.functionCalls.find(fc => fc.name === 'transfer');
               const endPanelCall = message.toolCall.functionCalls.find(fc => fc.name === 'endPanel');
               
               if (endPanelCall) {
                   console.log("[EndPanel] Session concluded by AI.");
-                  // Capture pending text
                   if (currentInputRef.current.trim()) transcriptBufferRef.current.push(`Candidate: ${currentInputRef.current.trim()}`);
                   if (currentOutputRef.current.trim()) transcriptBufferRef.current.push(`${character.name}: ${currentOutputRef.current.trim()}`);
-                  
                   const finalTranscript = transcriptBufferRef.current.join('\n');
                   await disconnect();
-                  
-                  if (onComplete) {
-                      onComplete(finalTranscript);
-                  }
+                  if (onComplete) onComplete(finalTranscript);
                   return;
               }
 
@@ -473,19 +436,26 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                 const reason = args.reason || "requested_by_current_juror";
                 const context = args.conversation_context;
 
-                const targetChar = charactersRef.current.find(c => c.name === targetName);
+                // Robust Fuzzy Matching: Bidirectional check
+                const normalizedTarget = targetName.toLowerCase().trim();
+                const targetChar = charactersRef.current.find(c => {
+                    const cName = c.name.toLowerCase().trim();
+                    return cName === normalizedTarget || 
+                           cName.includes(normalizedTarget) || 
+                           normalizedTarget.includes(cName);
+                });
+                
                 const currentJuror = currentCharacterRef.current;
 
                 if (targetChar && currentJuror) {
-                   console.log(`[Transfer] Switching to ${targetName} (${reason})...`);
+                   console.log(`[Transfer] Switching to ${targetChar.name} (Requested: "${targetName}")...`);
                    
-                   // 1. TICKET LOGIC
                    onTicketDecrement(currentJuror.id);
+                   // Construct optimistic updated state for immediate logic usage
                    const updatedCharacters = charactersRef.current.map(c => 
-                       c.id === currentJuror.id ? {...c, tickets: c.tickets - 1} : c
+                       c.id === currentJuror.id ? {...c, tickets: Math.max(0, c.tickets - 1)} : c
                    );
                    
-                   // 2. Capture Transcript
                    if (currentInputRef.current.trim()) {
                         transcriptBufferRef.current.push(`Candidate: ${currentInputRef.current.trim()}`);
                         currentInputRef.current = "";
@@ -496,24 +466,13 @@ export const useGeminiLive = ({ onTransfer, onUpdateJuror, onTicketDecrement, us
                    }
                    const transcriptHistory = transcriptBufferRef.current.join('\n');
 
-                   // 3. IMMEDIATE DISCONNECT
                    await disconnect();
                    
-                   // 4. ROSTER & FINAL TURN CHECK
                    const totalRemainingTickets = updatedCharacters.reduce((sum, c) => sum + c.tickets, 0);
-                   
                    const finishedJurors = updatedCharacters.filter(c => c.tickets <= 0).map(c => c.name);
                    const blockedListText = finishedJurors.length > 0 
-                       ? `[ROSTER UPDATE]: The following jurors have finished their questioning and are UNAVAILABLE: ${finishedJurors.join(', ')}. DO NOT transfer to them.`
+                       ? `[ROSTER UPDATE]: The following jurors have finished their questioning: ${finishedJurors.join(', ')}. DO NOT transfer to them.`
                        : "";
-
-                   // 5. Construct FAST ACTION PROMPT
-                   let attitudeInstruction = "";
-                   if (reason === 'requested_by_user') {
-                       attitudeInstruction = `[MODE: USER REQUEST] The user specifically asked to speak to you. Acknowledge this politely.`;
-                   } else {
-                       attitudeInstruction = `[MODE: HANDOFF] ${currentJuror.name} passed the conversation to you. Acknowledge them.`;
-                   }
 
                    let fastInstruction = `
 [SYSTEM EVENT: LIVE TRANSFER]
@@ -522,85 +481,56 @@ TO: ${targetChar.name}
 REASON: ${reason}
 CONTEXT: "${context}"
 ${blockedListText}
-
-INSTRUCTION:
-${attitudeInstruction}
-REMINDER: Be concise. Short questions. No fluff.
-LANGUAGE: English only.
 `;
 
-                   // 6. LAST MAN STANDING LOGIC
-                   let nextTools = undefined; // Default to transferTool
+                   let nextTools = undefined;
                    let targetSystemInstruction = targetChar.systemInstruction;
                    
                    if (totalRemainingTickets <= 1) {
                        console.log("⚠️ [System] Final Turn Detected. Switching to EndPanel Tool.");
                        fastInstruction += `\n\n[SYSTEM NOTICE]: You are the FINAL juror with the LAST ticket. Ask your question, evaluate the answer, and then IMMEDIATELY call the \`endPanel\` tool to conclude the session. DO NOT TRANSFER.`;
-                       nextTools = [{ functionDeclarations: [endPanelTool] }];
-                       
-                       // CRITICAL: Replace the Transfer Rules in the template with Ending Rules
-                       // to prevents model confusion.
-                       targetSystemInstruction = convertToFinalJurorPrompt(targetSystemInstruction);
+                       nextTools = [{ functionDeclarations: [END_PANEL_TOOL] }];
+                       const newInstruction = convertToFinalJurorPrompt(targetSystemInstruction);
+                       if (newInstruction !== targetSystemInstruction) {
+                           targetSystemInstruction = newInstruction;
+                       }
                    }
 
                    let updatedInstruction = fastInstruction + "\n\n" + targetSystemInstruction;
-                   
-                   const updatedTargetChar = {
-                       ...targetChar,
-                       systemInstruction: updatedInstruction
-                   };
+                   const updatedTargetChar = { ...targetChar, systemInstruction: updatedInstruction };
 
-                   // 7. Trigger UI & Connection
                    onTransfer(updatedTargetChar, context);
                    
+                   // Ensure async disconnect has fully cleared previous session refs
                    if (sessionPromiseRef.current === null) { 
                         setTimeout(() => {
                              connect(updatedTargetChar, context, nextTools);
-                        }, 200);
+                        }, 300); // Increased safety buffer
                    }
 
-                   // 8. Brain Supervision
-                   brain.Phase3Transfer(
-                       currentJuror.name, 
-                       targetChar.name, 
-                       transcriptHistory, 
-                       context,
-                       reason
-                   ).then((result) => {
-                       if (result) {
-                           const newPrompt = updateJurorSystemPrompt(
-                               currentJuror.systemInstruction, 
-                               result.next_question, 
-                               result.memory_update
-                           );
-                           onUpdateJuror(currentJuror.id, newPrompt);
-                       }
-                   }).catch(e => console.error("Background Brain Error:", e));
-
+                   brain.Phase3Transfer(currentJuror.name, targetChar.name, transcriptHistory, context, reason)
+                        .then((result) => {
+                            if (result) {
+                                const newPrompt = updateJurorSystemPrompt(currentJuror.systemInstruction, result.next_question, result.memory_update);
+                                onUpdateJuror(currentJuror.id, newPrompt);
+                            }
+                        })
+                        .catch(e => console.error("Background Brain Error:", e));
                    return;
+                } else {
+                    console.error(`[Transfer Failed] Could not find colleague matching: "${targetName}". Available:`, charactersRef.current.map(c => c.name));
                 }
               }
             }
 
-            // --- Audio Playback & Recording ---
             const base64Audio = serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
             if (base64Audio) {
-                if (recorderRef.current) {
-                    const audioData = base64ToUint8Array(base64Audio);
-                    recorderRef.current.addAiAudio(audioData);
-                }
-                
-                if (audioPlayerRef.current) {
-                    audioPlayerRef.current.play(base64Audio, (vol) => {
-                        setVolume(prev => ({ ...prev, outputVolume: vol }));
-                    });
-                }
+                if (recorderRef.current) recorderRef.current.addAiAudio(base64ToUint8Array(base64Audio));
+                if (audioPlayerRef.current) audioPlayerRef.current.play(base64Audio, (vol) => setVolume(prev => ({ ...prev, outputVolume: vol })));
             }
 
             if (serverContent?.interrupted) {
-                if (audioPlayerRef.current) {
-                    audioPlayerRef.current.stop();
-                }
+                if (audioPlayerRef.current) audioPlayerRef.current.stop();
             }
           },
           onclose: () => {
@@ -619,9 +549,12 @@ LANGUAGE: English only.
       sessionPromise.then(async sess => {
           currentSessionRef.current = sess;
           try {
-              // Initial greeting trigger via Text (Zero Latency)
               await new Promise(resolve => setTimeout(resolve, 200));
-              await sendInitialTrigger(sess);
+              let triggerMessage = "Ask your question.";
+              if (!initialContext) {
+                  triggerMessage = "introduce yourself and give a short introduction about what happened and what the goal of the conversation is";
+              }
+              await sendInitialTrigger(sess, triggerMessage);
           } catch (e) {
               console.error("Error processing initial trigger:", e);
           }

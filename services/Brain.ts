@@ -36,10 +36,11 @@ export class Brain {
 
   /**
    * Initializes the persistent chat session if it doesn't exist.
+   * Optionally force resets it.
    */
-  private getOrCreateSession(): Chat {
-    if (!this.chatSession) {
-      console.log('[Brain] Initializing persistent Gemini Chat Session...');
+  private getOrCreateSession(reset: boolean = false): Chat {
+    if (reset || !this.chatSession) {
+      console.log('[Brain] Initializing NEW Gemini Chat Session...');
       const ai = new GoogleGenAI({ apiKey: this.apiKey });
       this.chatSession = ai.chats.create({
         model: 'gemini-2.5-flash',
@@ -48,9 +49,39 @@ export class Brain {
         }
       });
       // Explicitly log the System Prompt as the first entry
+      this.transcript = []; // Clear transcript on reset
       this.addLog('system', BRAIN_SYS_PROMPT);
     }
-    return this.chatSession;
+    return this.chatSession!;
+  }
+
+  /**
+   * Helper to determine MIME type based on extension if browser defaults to octet-stream
+   */
+  private getMimeType(file: File): string {
+      // If browser detected a specific valid type, use it.
+      // However, browsers often fallback to application/octet-stream for .md, .csv, etc.
+      if (file.type && file.type !== 'application/octet-stream') {
+          return file.type;
+      }
+
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      
+      switch (ext) {
+          case 'pdf': return 'application/pdf';
+          case 'txt': return 'text/plain';
+          case 'md': return 'text/plain'; // Gemini handles markdown as text
+          case 'csv': return 'text/csv';
+          case 'json': return 'application/json';
+          case 'js': return 'text/javascript';
+          case 'ts': return 'text/typescript';
+          case 'py': return 'text/x-python';
+          case 'jpg': 
+          case 'jpeg': return 'image/jpeg';
+          case 'png': return 'image/png';
+          case 'webp': return 'image/webp';
+          default: return 'text/plain'; // Fallback to text for unknown files to avoid 400 error
+      }
   }
 
   /**
@@ -65,13 +96,14 @@ export class Brain {
             const base64 = await this.fileToBase64(f);
             return {
                 inlineData: {
-                    mimeType: f.type || 'application/octet-stream',
+                    mimeType: this.getMimeType(f),
                     data: base64
                 }
             };
         }));
 
-        const session = this.getOrCreateSession();
+        // CRITICAL: Start a fresh session for every new Phase 1 to avoid pollution from previous runs
+        const session = this.getOrCreateSession(true);
         const promptText = getPhase1Prompt(scenario);
         
         this.addLog('system', `[PHASE 1 TRIGGER] [With ${files.length} files] ${promptText}`);
@@ -93,8 +125,8 @@ export class Brain {
   }
 
   /**
-   * Phase 1.5: Generate Juror Personas (Demo Config)
-   * Uses the context from Phase 1 to generate 3 relevant jurors.
+   * Phase 1.5: Generate Juror Personas (Dynamic Count)
+   * Uses the context from Phase 1 to generate 1-3 relevant jurors.
    */
   public async generateJurorPersonas(): Promise<Character[]> {
     console.log("[Brain] Phase 1.5: Generating Juror Personas...");
@@ -130,14 +162,20 @@ export class Brain {
     };
 
     const prompt = `
-    Based on the scenario and documents provided in Phase 1, generate 3 distinct, high-quality expert interviewer personas.
+    Based on the scenario and documents provided in Phase 1, determine the optimal number of interviewers (Min: 1, Max: 3) based on the complexity of the topic.
+
+    1. **Analyze Complexity:**
+       - Simple/Personal scenarios (e.g. "Excusing a mistake") -> 1 Juror.
+       - Moderate scenarios (e.g. "Job Interview") -> 2 Jurors.
+       - Complex/High Stakes (e.g. "PhD Defense", "VC Pitch") -> 3 Jurors.
+
+    2. **Generate Personas:**
+       Generate a JSON array of objects for the chosen number of jurors.
     
     REQUIREMENTS:
-    - **Diversity:** They should cover different angles (e.g., The Skeptic, The Technical Expert, The Business/Product Lead) relevant to the user's specific scenario.
+    - **Diversity:** They should cover different angles (e.g., The Skeptic, The Technical Expert, The Business/Product Lead).
     - **Voice:** Select a voice that fits the persona's gender/vibe. **DO NOT USE 'Fenrir'.**
     - **Color:** Assign a distinct color.
-    
-    Output a JSON array of 3 objects.
     `;
 
     try {
@@ -251,7 +289,7 @@ export class Brain {
                 systemInstruction = systemInstruction.split('{{COLLEAGUE}}').join(config.colleagues_section || "");
                 
                 // Wrap History in Tags for Phase 3 replacement
-                const initialHistory = "<HISTORY>\nSession just started. No specific history yet. Start fresh.\n</HISTORY>";
+                const initialHistory = "Session just started. No specific history yet. Start fresh.";
                 systemInstruction = systemInstruction.split('{{HISTORY}}').join(initialHistory);
 
                 updatedJurors.push({
@@ -283,7 +321,7 @@ export class Brain {
       departingJurorName: string, 
       targetJurorName: string, 
       transcript: string, 
-      summary: string,
+      summary: string, 
       reason: string
   ): Promise<Phase3Result | null> {
       console.log(`[Brain] Phase 3: Analyzing handoff (${reason}) from ${departingJurorName} to ${targetJurorName}...`);
@@ -365,13 +403,23 @@ export class Brain {
               console.log("[Brain] Grounding Metadata received:", response.candidates[0].groundingMetadata);
           }
           
-          // Parse JSON from Markdown Code Block
-          // Expecting ```json ... ``` or just { ... }
-          let jsonStr = rawText;
-          if (rawText.includes('```')) {
-              const match = rawText.match(/```(?:json)?([\s\S]*?)```/);
-              if (match && match[1]) {
-                  jsonStr = match[1];
+          // Improved JSON extraction:
+          // 1. Try to extract from Markdown block first
+          let jsonStr = "";
+          const markdownMatch = rawText.match(/```(?:json)?([\s\S]*?)```/);
+          
+          if (markdownMatch && markdownMatch[1]) {
+              jsonStr = markdownMatch[1];
+          } else {
+              // 2. Fallback: Find first '{' and last '}'
+              const startIdx = rawText.indexOf('{');
+              const endIdx = rawText.lastIndexOf('}');
+              
+              if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+                  jsonStr = rawText.substring(startIdx, endIdx + 1);
+              } else {
+                  // 3. Last resort
+                  jsonStr = rawText;
               }
           }
           
@@ -385,6 +433,8 @@ export class Brain {
           } catch (parseError) {
               console.error("[Brain] Failed to parse Verdict JSON", parseError);
               console.log("Raw output:", rawText);
+              // Attempt to recover if the error is due to truncated JSON or similar simple issues?
+              // For now, fail gracefully.
               return null;
           }
 

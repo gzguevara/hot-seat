@@ -19,7 +19,10 @@ You are the Lead Auditor of this simulation. Your job is to rigorously evaluate 
 **LANGUAGE**: The report, summary, and all fields MUST be in **ENGLISH**.
 
 **OUTPUT FORMAT:**
-You MUST return the result as a valid JSON object enclosed in a markdown code block (e.g., \`\`\`json ... \`\`\`).
+You MUST return the result as a valid JSON object. 
+- Enclose the JSON in a markdown code block (e.g., \`\`\`json ... \`\`\`).
+- DO NOT add preamble text like "Here is the report" or "I have analyzed...".
+- The output should start with \`\`\`json and end with \`\`\`.
 
 JSON Schema:
 {

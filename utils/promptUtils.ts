@@ -11,11 +11,12 @@ export function updateJurorSystemPrompt(originalPrompt: string, newQuestion: str
     let updatedPrompt = originalPrompt;
   
     // 1. Update Question Section
-    // Look for header # 4, consume until header # 5
-    // Uses [\s\S] to match across lines.
-    // (?=...) is a lookahead to stop before the next header.
-    // [\r\n]+ handles both \n and \r\n
-    const questionRegex = /(# 4\. YOUR ASSIGNED QUESTION\s*[\r\n]+)([\s\S]*?)(?=[\r\n]+# 5)/;
+    // Handles headers like "# 4." or "## 4."
+    // regex breakdown:
+    // (#+ 4\.) matches "# 4." or "## 4."
+    // [\s\S]*? matches content lazily
+    // (?=[\r\n]+#+ 5) looks ahead for the next section header (Section 5)
+    const questionRegex = /(#+ 4\. YOUR ASSIGNED QUESTION\s*[\r\n]+)([\s\S]*?)(?=[\r\n]+#+ 5)/;
     
     if (questionRegex.test(updatedPrompt)) {
       updatedPrompt = updatedPrompt.replace(questionRegex, `$1${newQuestion}\n`);
@@ -24,8 +25,9 @@ export function updateJurorSystemPrompt(originalPrompt: string, newQuestion: str
     }
   
     // 2. Append to History Section
-    // Look for header # 5, consume until header # 6 OR end of string ($)
-    const historyRegex = /(# 5\. CANDIDATE HISTORY \(SATISFACTION LEVEL\)\s*[\r\n]+)([\s\S]*?)(?=[\r\n]+# 6|$)/;
+    // Handles headers like "# 5." or "## 5."
+    // Looks ahead for Section 6 OR end of string ($)
+    const historyRegex = /(#+ 5\. CANDIDATE HISTORY \(SATISFACTION LEVEL\)\s*[\r\n]+)([\s\S]*?)(?=[\r\n]+#+ 6|$)/;
   
     if (historyRegex.test(updatedPrompt)) {
       updatedPrompt = updatedPrompt.replace(historyRegex, (match, header, content) => {

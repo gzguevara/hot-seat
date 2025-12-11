@@ -21,6 +21,26 @@ const EXAMPLES = [
   "Justifying a 2-year delay on the 'MVP' launch..."
 ];
 
+const DEMO_SCENARIOS = [
+  {
+    emoji: "🚗",
+    title: "The Fender Bender",
+    text: "Explaining a 'minor scratch' on my Dad's vintage car that I borrowed without asking to a panel of disappointed parents..."
+  },
+  {
+    emoji: "🎤",
+    title: "The 'Sick' Day",
+    text: "Justifying running into my boss at a karaoke bar when I supposedly called in sick with 'severe food poisoning'..."
+  },
+  {
+    emoji: "💍",
+    title: "The Forgotten Anniversary",
+    text: "Justifying why I bought a vacuum cleaner as an anniversary gift to my spouse who was expecting jewelry..."
+  }
+];
+
+const ALLOWED_EXTENSIONS = ['.pdf', '.txt', '.md', '.csv', '.jpg', '.jpeg', '.png', '.webp'];
+
 const SetupWizard: React.FC<SetupWizardProps> = ({ 
   onContextSubmitted, 
   onComplete, 
@@ -30,6 +50,7 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
   const [isGenerating, setIsGenerating] = useState(false); // New state for Phase 1.5 loading
   const [scenario, setScenario] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  const [fileError, setFileError] = useState<string | null>(null);
   
   // Start with 2 jurors by default
   const [jurors, setJurors] = useState<Character[]>(
@@ -83,10 +104,55 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
     return () => clearTimeout(timer);
   }, [charIndex, isDeleting, exampleIndex, scenario]);
 
+  const isValidFile = (file: File) => {
+    const validMimeTypes = ['application/pdf', 'text/plain', 'text/csv', 'text/markdown'];
+    
+    // 1. Check MIME type (Images are easy)
+    if (file.type.startsWith('image/')) return true;
+    if (validMimeTypes.includes(file.type)) return true;
+    
+    // 2. Fallback to extension check (useful for MD/CSV on some OSs)
+    const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+    return ALLOWED_EXTENSIONS.includes(ext);
+  };
+
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setFileError(null);
     if (e.target.files) {
-      setFiles(Array.from(e.target.files));
+      const newFiles = Array.from(e.target.files) as File[];
+      const validFiles: File[] = [];
+      let hasInvalid = false;
+
+      newFiles.forEach(f => {
+          if (isValidFile(f)) {
+              // Prevent duplicates based on name/size/lastModified
+              const isDuplicate = files.some(existing => 
+                  existing.name === f.name && 
+                  existing.size === f.size && 
+                  existing.lastModified === f.lastModified
+              );
+              if (!isDuplicate) validFiles.push(f);
+          } else {
+              hasInvalid = true;
+          }
+      });
+
+      if (hasInvalid) {
+          setFileError("Some files were rejected. Only PDF, TXT, MD, CSV, and Images are allowed.");
+      } else if (validFiles.length === 0 && newFiles.length > 0) {
+           // Case where duplicates were filtered out
+           // Optional: setFileError("File already added."); 
+      }
+      
+      setFiles(prev => [...prev, ...validFiles]);
+      
+      // Reset input value to allow re-selecting the same file if needed
+      e.target.value = ''; 
     }
+  };
+
+  const handleRemoveFile = (indexToRemove: number) => {
+      setFiles(prev => prev.filter((_, i) => i !== indexToRemove));
   };
 
   const handleNext = async () => {
@@ -99,15 +165,11 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
     const generatedJurors = await brain.generateJurorPersonas();
     
     if (generatedJurors && generatedJurors.length > 0) {
-        // Only show the first 2 generated jurors
-        setJurors(generatedJurors.slice(0, 2));
+        // Use exactly what the brain returned (1-3 jurors)
+        setJurors(generatedJurors);
         
-        // Cache the 3rd one as a spare if the user wants to add it later
-        if (generatedJurors.length > 2) {
-            setSpareJuror(generatedJurors[2]);
-        } else {
-            setSpareJuror(null);
-        }
+        // Reset spare juror. If user wants to add manually, they will use presets/generics.
+        setSpareJuror(null);
     } else {
         // Fallback: Use presets if generation fails
         setJurors(initialCharacters.slice(0, 2).map(c => ({...c, tickets: 1})));
@@ -245,14 +307,36 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
           </header>
 
           <div className="space-y-6">
-            <div>
-              <label className="block text-xs font-bold text-red-500 uppercase tracking-wider mb-2">Scenario</label>
-              <textarea
-                value={scenario}
-                onChange={(e) => setScenario(e.target.value)}
-                className="w-full h-40 bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-white placeholder-gray-600 focus:ring-2 focus:ring-red-900 focus:border-red-600 resize-none transition-all font-mono text-sm"
-                placeholder={scenario.length > 0 ? "Describe your scenario..." : placeholder}
-              />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="flex flex-col">
+                    <label className="block text-xs font-bold text-red-500 uppercase tracking-wider mb-2">Describe your scenario</label>
+                    <textarea
+                        value={scenario}
+                        onChange={(e) => setScenario(e.target.value)}
+                        className="w-full flex-grow bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-white placeholder-gray-600 focus:ring-2 focus:ring-red-900 focus:border-red-600 resize-none transition-all font-mono text-sm min-h-[16rem]"
+                        placeholder={scenario.length > 0 ? "Describe your scenario..." : placeholder}
+                    />
+                </div>
+                <div className="flex flex-col">
+                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">...Or Select of our Demo Scenarios</label>
+                    <div className="flex flex-col gap-3 h-full">
+                        {DEMO_SCENARIOS.map((demo, i) => (
+                            <button 
+                                key={i}
+                                onClick={() => setScenario(demo.text)}
+                                className="text-left p-4 bg-gray-900/30 hover:bg-red-900/10 border border-gray-800 hover:border-red-800 rounded-xl transition-all group flex-1"
+                            >
+                                <div className="flex items-center gap-3 mb-1">
+                                    <span className="text-xl group-hover:scale-110 transition-transform">{demo.emoji}</span>
+                                    <h4 className="font-bold text-gray-300 group-hover:text-white">{demo.title}</h4>
+                                </div>
+                                <p className="text-xs text-gray-500 group-hover:text-red-300/80 font-mono pl-9 line-clamp-2">
+                                    "{demo.text}"
+                                </p>
+                            </button>
+                        ))}
+                    </div>
+                </div>
             </div>
 
             <div>
@@ -264,30 +348,61 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                   <span className="block mt-1 text-red-400">Note: The model works best with PDFs. Please export PPTX/DOCX to PDF first.</span>
               </p>
               
-              <div className="relative group">
+              <div className="relative group mb-4">
                 <input
                   type="file"
                   multiple
-                  accept="application/pdf,text/*,image/*,.md,.csv"
+                  accept=".pdf,.txt,.md,.csv,.jpg,.jpeg,.png,.webp,application/pdf,text/*,image/*"
                   onChange={handleFileChange}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                 />
-                <div className="flex items-center justify-center w-full h-24 border-2 border-dashed border-gray-800 rounded-xl bg-gray-900/20 group-hover:border-red-600 group-hover:bg-red-900/10 transition-all">
+                <div className={`flex items-center justify-center w-full h-24 border-2 border-dashed rounded-xl transition-all ${
+                    fileError ? 'border-red-500 bg-red-900/10' : 'border-gray-800 bg-gray-900/20 group-hover:border-red-600 group-hover:bg-red-900/10'
+                }`}>
                   <div className="text-center">
-                    {files.length > 0 ? (
-                      <span className="text-red-400 font-bold">{files.length} file(s) loaded</span>
-                    ) : (
-                      <span className="text-gray-600 group-hover:text-red-400 font-mono text-sm uppercase tracking-wider">
-                          Drop Files Here (PDF, IMG, TXT)
-                      </span>
-                    )}
+                    <span className={`font-mono text-sm uppercase tracking-wider ${fileError ? 'text-red-400' : 'text-gray-600 group-hover:text-red-400'}`}>
+                        {fileError ? 'Invalid File Type' : 'Drop Files Here (PDF, IMG, TXT)'}
+                    </span>
                   </div>
                 </div>
               </div>
+
+              {/* Error Message Toast */}
+              {fileError && (
+                  <div className="mb-4 p-3 bg-red-950/30 border border-red-900/50 rounded-lg flex items-center gap-2">
+                      <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <p className="text-xs text-red-300 font-mono">{fileError}</p>
+                  </div>
+              )}
+
+              {/* File List */}
               {files.length > 0 && (
-                <ul className="mt-2 text-xs text-gray-500 font-mono">
-                    {files.map((f, i) => <li key={i}>[ATTACHMENT] {f.name}</li>)}
-                </ul>
+                <div className="space-y-2">
+                    {files.map((f, i) => (
+                        <div key={i} className="flex items-center justify-between p-3 bg-gray-900 border border-gray-800 rounded-lg group hover:border-gray-700 transition-colors">
+                             <div className="flex items-center gap-3 overflow-hidden">
+                                <span className="p-1.5 bg-gray-800 rounded text-red-500">
+                                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                    </svg>
+                                </span>
+                                <span className="text-sm text-gray-300 font-mono truncate">{f.name}</span>
+                                <span className="text-xs text-gray-600 font-mono whitespace-nowrap">{(f.size / 1024).toFixed(0)} KB</span>
+                             </div>
+                             <button 
+                                onClick={() => handleRemoveFile(i)}
+                                className="text-gray-600 hover:text-red-500 p-1 rounded-md hover:bg-red-900/20 transition-all"
+                                title="Remove File"
+                             >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                             </button>
+                        </div>
+                    ))}
+                </div>
               )}
             </div>
 
@@ -417,12 +532,12 @@ const SetupWizard: React.FC<SetupWizardProps> = ({
                 </div>
 
                 <div>
-                     <label className="text-[10px] text-red-500 uppercase font-bold tracking-widest">Strategy</label>
+                     <label className="text-[10px] text-red-500 uppercase font-bold tracking-widest">Profile</label>
                      <textarea 
                         value={juror.description}
                         onChange={(e) => handleJurorChange(idx, 'description', e.target.value)}
                         rows={3}
-                        className="w-full bg-gray-900 border border-gray-800 rounded px-2 py-1.5 text-xs text-gray-500 focus:border-red-600 focus:outline-none resize-none font-mono"
+                        className="w-full bg-gray-900 border border-gray-800 rounded px-2 py-1.5 text-xs text-white focus:border-red-600 focus:outline-none resize-none font-mono"
                      />
                 </div>
               </div>
