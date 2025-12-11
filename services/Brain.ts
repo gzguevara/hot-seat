@@ -85,11 +85,13 @@ export class Brain {
   }
 
   /**
-   * Generates a profile picture for a juror using Gemini 2.5 Flash Image.
+   * Generates a profile picture for a juror using Gemini 3 Pro Image Preview.
    */
   public async generateAvatar(jurorName: string, role: string, description: string, voiceName: string): Promise<string> {
       console.log(`[Brain] Generating avatar for ${jurorName} (${role})...`);
       try {
+          // We use a separate client/call here because gemini-3-pro-image-preview is a distinct model
+          // from the reasoning model (gemini-3-pro-preview) used in the persistent chat session.
           const ai = new GoogleGenAI({ apiKey: this.apiKey });
           
           // Determine gender hint from voice for visual consistency
@@ -103,11 +105,12 @@ export class Brain {
           High quality, realistic, webcam style lighting, sharp focus.`;
           
           const response = await ai.models.generateContent({
-              model: 'gemini-2.5-flash-image',
+              model: 'gemini-3-pro-image-preview',
               contents: { parts: [{ text: prompt }] },
               config: {
                   imageConfig: {
-                      aspectRatio: "1:1"
+                      aspectRatio: "1:1",
+                      imageSize: "1K"
                   }
               }
           });
@@ -156,7 +159,11 @@ export class Brain {
         console.log('[Brain] Sending context to Gemini...');
         
         const response = await session.sendMessage({
-            message: [...fileParts, { text: promptText }]
+            message: [...fileParts, { text: promptText }],
+            config: {
+                // High reasoning for initial research and context understanding
+                thinkingConfig: { thinkingLevel: "high" } as any
+            }
         });
 
         const responseText = response.text || "";
@@ -229,7 +236,9 @@ export class Brain {
             message: prompt,
             config: {
                 responseMimeType: "application/json",
-                responseSchema: schema
+                responseSchema: schema,
+                // Low reasoning for standard generation
+                thinkingConfig: { thinkingLevel: "low" } as any
             }
         });
 
@@ -317,7 +326,9 @@ export class Brain {
                 message: prompt,
                 config: {
                     responseMimeType: "application/json",
-                    responseSchema: jurorConfigSchema
+                    responseSchema: jurorConfigSchema,
+                    // Low reasoning for prompt generation
+                    thinkingConfig: { thinkingLevel: "low" } as any
                 }
             });
 
@@ -418,7 +429,9 @@ export class Brain {
               message: prompt,
               config: {
                   responseMimeType: "application/json",
-                  responseSchema: assessmentSchema
+                  responseSchema: assessmentSchema,
+                  // Low reasoning for supervision
+                  thinkingConfig: { thinkingLevel: "low" } as any
               }
           });
 
@@ -462,6 +475,8 @@ export class Brain {
               message: prompt,
               config: {
                   tools: [{ googleSearch: {} }],
+                  // High reasoning for final verdict and fact-checking
+                  thinkingConfig: { thinkingLevel: "high" } as any
                   // responseSchema is intentionally OMITTED to allow search usage
               }
           });

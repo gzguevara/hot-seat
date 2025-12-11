@@ -6,13 +6,14 @@ import CharacterCard from './components/CharacterCard';
 import SetupWizard from './components/SetupWizard';
 import VerdictView from './components/VerdictView';
 import IntroView from './components/IntroView';
+import DisclaimerView from './components/DisclaimerView';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { brain } from './services/Brain';
 
-type AppState = 'intro' | 'setup' | 'interview' | 'analyzing' | 'verdict';
+type AppState = 'disclaimer' | 'intro' | 'setup' | 'interview' | 'analyzing' | 'verdict';
 
 const App: React.FC = () => {
-  const [appState, setAppState] = useState<AppState>('intro');
+  const [appState, setAppState] = useState<AppState>('disclaimer');
   const [contextDesc, setContextDesc] = useState('');
   const [contextFiles, setContextFiles] = useState<File[]>([]);
   
@@ -131,6 +132,12 @@ const App: React.FC = () => {
   return (
     <div className="h-screen w-screen bg-[#18191a] text-white flex flex-col overflow-hidden relative selection:bg-red-700 selection:text-white print:overflow-visible print:h-auto print:bg-white print:block">
       
+      {appState === 'disclaimer' && (
+        <div className="flex-1 flex items-center justify-center overflow-auto">
+            <DisclaimerView onContinue={() => setAppState('intro')} />
+        </div>
+      )}
+
       {appState === 'intro' && (
         <div className="flex-1 flex items-center justify-center overflow-auto">
             <IntroView onStart={() => setAppState('setup')} />
