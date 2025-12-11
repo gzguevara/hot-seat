@@ -43,14 +43,14 @@ const CharacterCard: React.FC<CharacterCardProps> = ({
         <div className={`absolute inset-0 opacity-10 bg-gradient-to-t ${character.color} to-transparent pointer-events-none`} />
       )}
 
-      {/* Center Avatar (Video Off Style) */}
-      <div className="relative z-10">
+      {/* Center Avatar (Video Feed Style) */}
+      <div className="relative z-10 p-1">
           {/* Speaking Ring Animation */}
           {isActive && isConnected && volume.outputVolume > 0.01 && (
-             <div className="absolute inset-0 rounded-full border-2 border-red-500 animate-ping opacity-50"></div>
+             <div className="absolute inset-0 -m-1 rounded-3xl border-2 border-red-500 animate-ping opacity-50"></div>
           )}
           
-          <div className={`w-24 h-24 md:w-32 md:h-32 rounded-full overflow-hidden border-2 ${isActive ? 'border-red-500' : 'border-gray-600'} shadow-2xl relative`}>
+          <div className={`w-48 h-48 md:w-72 md:h-72 rounded-2xl overflow-hidden border-2 ${isActive ? 'border-red-500' : 'border-gray-600'} shadow-2xl relative bg-black`}>
              <img 
                src={character.avatarUrl} 
                alt={character.name} 
@@ -60,7 +60,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({
              {/* Connecting Overlay */}
              {isActive && isConnecting && (
                 <div className="absolute inset-0 bg-black/60 flex items-center justify-center backdrop-blur-sm">
-                    <svg className="animate-spin h-8 w-8 text-white" viewBox="0 0 24 24">
+                    <svg className="animate-spin h-12 w-12 text-white" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
@@ -70,8 +70,8 @@ const CharacterCard: React.FC<CharacterCardProps> = ({
 
           {/* Silenced Indicator */}
           {isFinished && (
-              <div className="absolute -bottom-2 -right-2 bg-gray-800 text-gray-400 p-1.5 rounded-full border border-gray-600">
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <div className="absolute -bottom-2 -right-2 bg-gray-800 text-gray-400 p-2 rounded-full border border-gray-600">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
                   </svg>
@@ -80,7 +80,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({
       </div>
 
       {/* Name Tag (Google Meet Style) */}
-      <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded flex items-center gap-3 border border-white/5 max-w-[80%]">
+      <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded flex items-center gap-3 border border-white/5 max-w-[80%] z-20">
           <span className="text-white font-medium text-sm truncate shadow-sm">
             {character.name}
           </span>
@@ -101,7 +101,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({
       </div>
 
       {/* Ticket Counter (Top Right) */}
-      <div className="absolute top-4 right-4 flex gap-1">
+      <div className="absolute top-4 right-4 flex gap-1 z-20">
           {Array.from({length: character.tickets}).map((_, i) => (
              <div key={i} className={`w-2 h-2 rounded-full shadow-lg ${isActive ? 'bg-red-500' : 'bg-gray-600'}`}></div>
           ))}

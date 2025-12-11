@@ -43,7 +43,7 @@ export class Brain {
       console.log('[Brain] Initializing NEW Gemini Chat Session...');
       const ai = new GoogleGenAI({ apiKey: this.apiKey });
       this.chatSession = ai.chats.create({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-pro-preview',
         config: {
           systemInstruction: BRAIN_SYS_PROMPT
         }
@@ -81,6 +81,52 @@ export class Brain {
           case 'png': return 'image/png';
           case 'webp': return 'image/webp';
           default: return 'text/plain'; // Fallback to text for unknown files to avoid 400 error
+      }
+  }
+
+  /**
+   * Generates a profile picture for a juror using Gemini 2.5 Flash Image.
+   */
+  public async generateAvatar(jurorName: string, role: string, description: string, voiceName: string): Promise<string> {
+      console.log(`[Brain] Generating avatar for ${jurorName} (${role})...`);
+      try {
+          const ai = new GoogleGenAI({ apiKey: this.apiKey });
+          
+          // Determine gender hint from voice for visual consistency
+          const isFemale = ["Kore", "Zephyr"].includes(voiceName);
+          const genderTerm = isFemale ? "female" : "male";
+
+          const prompt = `A professional close-up video call headshot of a ${genderTerm} ${role} named ${jurorName}. 
+          ${description}.
+          The subject is looking directly into the camera lens as if in a Zoom call. 
+          Neutral or slightly skeptical expression. 
+          High quality, realistic, webcam style lighting, sharp focus.`;
+          
+          const response = await ai.models.generateContent({
+              model: 'gemini-2.5-flash-image',
+              contents: { parts: [{ text: prompt }] },
+              config: {
+                  imageConfig: {
+                      aspectRatio: "1:1"
+                  }
+              }
+          });
+
+          // Extract image
+          const candidates = response.candidates;
+          if (candidates && candidates[0] && candidates[0].content && candidates[0].content.parts) {
+             for (const part of candidates[0].content.parts) {
+                  if (part.inlineData) {
+                      return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                  }
+              } 
+          }
+          
+          console.warn("[Brain] No image data found in response.");
+          return `https://ui-avatars.com/api/?name=${jurorName}&background=random`; // Fallback
+      } catch (e) {
+          console.error("[Brain] Avatar generation failed", e);
+          return `https://ui-avatars.com/api/?name=${jurorName}&background=random`;
       }
   }
 
@@ -196,20 +242,26 @@ export class Brain {
 
         const rawJurors = JSON.parse(jsonRaw);
         
-        // Map to Character Type
-        const generatedJurors: Character[] = rawJurors.map((j: any, i: number) => ({
-            id: `char_gen_${Date.now()}_${i}`,
-            name: j.name,
-            role: j.role,
-            description: j.description,
-            voiceName: j.voiceName,
-            color: j.color,
-            avatarUrl: `https://picsum.photos/seed/${j.name.replace(/\s/g,'')}${i}/300/300`,
-            systemInstruction: "You are a helpful interviewer.", // Placeholder, filled in Phase 2
-            tickets: 1
-        }));
+        // Map to Character Type AND Generate Avatars in Parallel
+        const jurorPromises = rawJurors.map(async (j: any, i: number) => {
+            // Start avatar generation
+            const avatarUrl = await this.generateAvatar(j.name, j.role, j.description, j.voiceName);
+            
+            return {
+                id: `char_gen_${Date.now()}_${i}`,
+                name: j.name,
+                role: j.role,
+                description: j.description,
+                voiceName: j.voiceName,
+                color: j.color,
+                avatarUrl: avatarUrl,
+                systemInstruction: "You are a helpful interviewer.", // Placeholder, filled in Phase 2
+                tickets: 1
+            };
+        });
 
-        console.log(`[Brain] Generated ${generatedJurors.length} personas.`);
+        const generatedJurors = await Promise.all(jurorPromises);
+        console.log(`[Brain] Generated ${generatedJurors.length} personas with avatars.`);
         return generatedJurors;
 
     } catch (e: any) {
@@ -223,11 +275,18 @@ export class Brain {
    * Phase 2: Configure Jurors (Dynamic Loop)
    */
   public async initializePhase2(jurors: Character[]): Promise<Character[]> {
-    console.log("[Brain] Phase 2 started: Configuring Jurors...");
+    console.log("[Brain] Phase 2 started: Configuring Jurors & Regenerating Avatars...");
     this.addLog('system', `[PHASE 2 TRIGGER] Configuring ${jurors.length} jurors.`);
     
     const session = this.getOrCreateSession();
     const updatedJurors: Character[] = [];
+
+    // 1. Kick off Avatar Regeneration based on FINAL user inputs
+    // We do this in parallel to the system prompt configuration to save time.
+    const avatarPromises = new Map<string, Promise<string>>();
+    jurors.forEach(j => {
+        avatarPromises.set(j.id, this.generateAvatar(j.name, j.role, j.description, j.voiceName));
+    });
 
     // Define Schema for Juror Configuration
     const jurorConfigSchema: Schema = {
@@ -270,6 +329,9 @@ export class Brain {
                 jsonRaw = jsonRaw.replace(/```json/g, '').replace(/```/g, '');
             }
             
+            // Resolve the new avatar for this juror
+            const newAvatarUrl = await avatarPromises.get(juror.id);
+
             if (jsonRaw) {
                 const config = JSON.parse(jsonRaw);
                 console.log(`[Brain] Configuration received for ${juror.name}.`);
@@ -296,16 +358,26 @@ export class Brain {
                     ...juror,
                     systemInstruction: systemInstruction,
                     // Apply Brain's Voice Choice
-                    voiceName: config.selected_voice || juror.voiceName
+                    voiceName: config.selected_voice || juror.voiceName,
+                    // Apply Newly Generated Avatar
+                    avatarUrl: newAvatarUrl || juror.avatarUrl
                 });
             } else {
-                updatedJurors.push(juror);
+                updatedJurors.push({
+                    ...juror, 
+                    avatarUrl: newAvatarUrl || juror.avatarUrl
+                });
             }
 
         } catch (e: any) {
             console.error(`[Brain] Failed to configure ${juror.name}`, e);
             this.addLog('system', `Error configuring ${juror.name}: ${e.message}`);
-            updatedJurors.push(juror);
+            // Still try to attach the new avatar even if config failed
+            const newAvatarUrl = await avatarPromises.get(juror.id);
+            updatedJurors.push({
+                ...juror, 
+                avatarUrl: newAvatarUrl || juror.avatarUrl
+            });
         }
     }
 
@@ -381,15 +453,13 @@ export class Brain {
       console.log("[Brain] Phase 4: Deliberation started...");
       this.addLog('system', "[PHASE 4] Starting Deliberation...");
 
-      const ai = new GoogleGenAI({ apiKey: this.apiKey });
-      
-      // Use standard generateContent instead of Chat to strictly separate context 
-      // and enable Search Tools without schema conflicts.
-      // Note: We cannot use responseSchema with googleSearch, so we parse manually.
+      const session = this.getOrCreateSession();
+      const prompt = getPhase4Prompt(transcript);
+      this.addLog('user', prompt);
+
       try {
-          const response = await ai.models.generateContent({
-              model: 'gemini-2.5-flash',
-              contents: getPhase4Prompt(transcript),
+          const response = await session.sendMessage({
+              message: prompt,
               config: {
                   tools: [{ googleSearch: {} }],
                   // responseSchema is intentionally OMITTED to allow search usage
