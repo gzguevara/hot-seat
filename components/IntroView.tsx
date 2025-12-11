@@ -19,7 +19,7 @@ const IntroView: React.FC<IntroViewProps> = ({ onStart }) => {
          </h1>
          
          <p className="text-xl md:text-2xl text-gray-300 max-w-2xl mx-auto font-light leading-relaxed">
-            The AI-powered gauntlet for your ideas. <br/>
+            The AI-powered panel discussion for your ideas. <br/>
             <span className="text-red-500 font-medium">Upload your pitch. Face the panel. Survive the questions.</span>
          </p>
       </div>
